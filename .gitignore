@@ -1,0 +1,7 @@
+bss
+venv/
+*.pyc
+__pycache__/
+*.o
+*.a
+*.so
