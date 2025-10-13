@@ -1,5 +1,17 @@
 # Batch Script Shell (BSS)
 
+## Historical Context: Batch Files and Command Prompt
+
+Batch files (.bat) and the Windows Command Prompt have their roots deeply embedded in computing history, stretching back to the early days of personal computing. The lineage traces back through the MS-DOS era of the 1980s, when Microsoft created MS-DOS (Microsoft Disk Operating System) as a command-line interface for early IBM PCs and compatibles.
+
+The .bat file extension stands for "batch," referring to the ability to batch-process multiple commands that would otherwise need to be entered manually. These batch files contain sequences of commands that are executed in order, providing a means to automate repetitive tasks and complex procedures.
+
+The design of MS-DOS was heavily influenced by earlier operating systems, most notably Digital Research's CP/M (Control Program/Monitor), which was one of the first operating systems for early personal computers in the 1970s. CP/M established many conventions that would later appear in MS-DOS, including the command-line interface, file system structure, and the concept of executable command files. Even the architecture of batch files - with their line-by-line command execution - can be traced back to these early systems.
+
+The Windows Command Prompt (cmd.exe) that we know today evolved from these DOS roots, maintaining backward compatibility with many of the same commands and scripting capabilities. Commands like `dir`, `cd`, `echo`, and the general structure of batch files can be traced back through this lineage to CP/M. This heritage makes understanding DOS-era scripting essential for working with legacy build systems and batch scripts, particularly in development environments that have evolved from older systems.
+
+## About BSS
+
 The Batch Script Shell (BSS) is a C implementation of a shell that interprets basic batch commands used in Symbian build scripts, with support for Windows-style paths, environment variables, and basic command execution.
 
 ## Building
