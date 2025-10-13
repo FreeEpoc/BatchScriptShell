@@ -1,5 +1,6 @@
 # Tasks
 ## TODO
+- change #define "v1.0" to be "latest"
 - CLI should feel like Windows Command Prompt or cmd in Wine. Default prompt in directory "C:\Users\sblo" is: "C:\Users\sblo>"
 - add "-h" and "--help" support for main program
 - add "help" command upport in the CLI command loop

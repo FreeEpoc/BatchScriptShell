@@ -5,6 +5,11 @@ AC_PROG_CC
 AC_PROG_INSTALL
 
 AC_CHECK_PROGS(MAKE, [make gmake])
+if test -z "$MAKE" ]; then
+   AC_MSG_ERROR([No make program found])
+fi
+
+AC_CHECK_PROGS(MAKE, [make gmake])
 if test -z "$MAKE"; then
    AC_MSG_ERROR([No make program found])
 fi

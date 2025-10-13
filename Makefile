@@ -1,5 +1,10 @@
 CC = gcc
 CFLAGS = -Wall -Wextra -std=c99 -g
+# Get the git revision number as the commit count
+GIT_REVISION := $(shell git log --oneline | wc -l)
+# Add the revision as a compile-time definition
+CFLAGS += -DBSS_VERSION=\"r$(GIT_REVISION)\"
+
 TARGET = bss
 SOURCES = shell.c
 
