@@ -38,6 +38,15 @@ extern ShellState shell_state;
 extern int echo_enabled;
 extern int is_batch_mode;
 
+// Global command line arguments
+extern char* command_line_args[64];
+extern int num_command_line_args;
+
+// Environment variable stack for SETLOCAL/ENDLOCAL
+extern char* env_stack[32][256];
+extern int env_stack_size[32];
+extern int env_stack_level;
+
 // Function prototypes
 int initialize_shell();
 int execute_command(char* command);
@@ -45,6 +54,7 @@ int execute_builtin_command(char** args, int arg_count);
 int execute_external_command(char** args, int arg_count);
 char* expand_variables(char* command);
 char* convert_path(char* path);
+char* convert_path_to_windows(char* path);
 int mount_directory(char* mount_point, char* target_path);
 char* get_mounted_path(char* path);
 int change_directory(char* path);
@@ -54,5 +64,9 @@ int handle_set(char** args, int arg_count);
 int handle_cd(char** args, int arg_count);
 int handle_cls(char** args, int arg_count);
 int handle_pause(char** args, int arg_count);
+int handle_help(char** args, int arg_count);
+int handle_setlocal(char** args, int arg_count);
+int handle_endlocal(char** args, int arg_count);
+int handle_if(char** args, int arg_count);
 
 #endif // SHELL_H
