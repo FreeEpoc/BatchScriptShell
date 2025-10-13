@@ -5,3 +5,39 @@ __pycache__/
 *.o
 *.a
 *.so
+
+# CMake build files
+build/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.manifest
+cmake_install.cmake
+
+# Autotools build files
+autom4te.cache/
+config.log
+config.status
+configure
+Makefile.in
+.deps/
+*.lo
+*.la
+*.lai
+.libs/
+# Autotools helper scripts
+compile
+depcomp
+install-sh
+missing
+aclocal.m4
+
+# Backup files
+Makefile.backup
+Makefile.main-backup
+Makefile.autotools-generated
+
+# Object and build artifacts
+*.o
+*.dylib
+*.dll
+.deps/

@@ -2,6 +2,64 @@
 
 The Batch Script Shell (BSS) is a C implementation of a shell that interprets basic batch commands used in Symbian build scripts, with support for Windows-style paths, environment variables, and basic command execution.
 
+## Building
+
+The project supports multiple build systems. Choose the one that best fits your environment:
+
+### Using Default Make
+
+```bash
+make
+```
+
+To clean build artifacts:
+```bash
+make clean
+```
+
+### Using CMake
+
+```bash
+make cmake-build
+```
+
+Or manually:
+```bash
+mkdir build
+cd build
+cmake ..
+make
+```
+
+### Using Autotools
+
+```bash
+make autotools-build
+```
+
+After the build completes, you'll need to restore the main Makefile:
+```bash
+make restore-main-makefile
+```
+
+Or manually:
+```bash
+autoreconf -fiv
+./configure
+make
+```
+
+To clean autotools-generated files:
+```bash
+make autotools-distclean
+```
+
+### Build Options
+
+- **Default build**: Simple compilation using gcc directly
+- **CMake**: Cross-platform build system with IDE support
+- **Autotools**: Traditional Unix-style build with advanced configuration options
+
 ## Features
 
 - Written in C

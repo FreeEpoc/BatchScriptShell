@@ -1,6 +1,8 @@
 # Tasks
 ## TODO
 - CLI should feel like Windows Command Prompt or cmd in Wine. Default prompt in directory "C:\Users\sblo" is: "C:\Users\sblo>"
+- add "-h" and "--help" support for main program
+- add "help" command upport in the CLI command loop
 - use md files in docs directory to create implementation stub of the shell program in C (COMPLETED)
 - Implement command line argument support (%1, %2, %3, etc.)
 - Implement SETLOCAL and ENDLOCAL commands for local variable scoping
