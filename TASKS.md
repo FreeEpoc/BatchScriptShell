@@ -1,0 +1,61 @@
+# Tasks
+## TODO
+- CLI should feel like Windows Command Prompt or cmd in Wine. Default prompt in directory "C:\Users\sblo" is: "C:\Users\sblo>"
+- use md files in docs directory to create implementation stub of the shell program in C (COMPLETED)
+- Implement command line argument support (%1, %2, %3, etc.)
+- Implement SETLOCAL and ENDLOCAL commands for local variable scoping
+- Implement IF/ELSE statement support
+- Implement nested IF statements
+- Implement comparison operators (EQU, NEQ, LSS, LEQ, GTR, GEQ)
+- Implement logical operators (AND, OR, NOT)
+- Implement arithmetic operators (+, -, *, /, %) with SET /A
+- Implement assignment operators (+=, -=, *=, /=, %=)
+- Implement bitwise operators (&, |, ^)
+- Implement REM/:: comment functionality
+- Implement GOTO and label functionality for functions
+- Implement CALL command to call functions
+- Implement EXIT /B for function returns
+- Implement FOR loop functionality
+- Implement redirection operators (>, >>, <, 2>, 2>&1)
+- Implement pipe operator (|)
+- Implement more file commands: COPY, DEL, MD, RD, REN, MOVE, TYPE, DIR
+- Implement date/time commands: DATE, TIME
+- Implement MORE, SORT, FIND commands
+- Implement CHOICE command for user input options
+- Implement START, TITLE commands
+- Implement ATTRIB, VOL, LABEL commands
+- Implement system information commands: SYSTEMINFO, VER
+- Implement network commands: PING, IPCONFIG, NET
+- Implement process commands: TASKLIST, TASKKILL
+- Implement SUBST command for drive substitution
+- Implement tree and other directory commands: TREE, XCOPY
+- Implement PATH command
+- Implement PROMPT command
+- Implement file comparison: FC, COMP
+- Implement disk commands: CHKDSK, FORMAT, DISKPART
+- Implement error handling and exit codes
+- Implement additional input/output features
+- Add support for numeric variables with SET /A
+- Implement SHIFT operator for command line arguments beyond %9
+- Implement string manipulation functions
+- Implement file I/O operations (reading, writing, appending files)
+- Implement conditional file operations
+- Add comprehensive error checking and reporting
+
+## DONE
+- created initial README.md
+- write to shell md files
+    - shell will default to "\\" directory separator, but supports "/"
+    - linux root directory "/" binds to "C:\\"
+    - other directories can be mount with internal MOUNT command (like in DOS?)
+    - "%OS%" environment value is real like uname in linux, but it can be overriden with program params and internal commands to e.g. "Windows_NT"
+- create a small web scraper, which downloads tutorial web pages from "https://www.tutorialspoint.com/batch_script/index.htm" and all pages starting with "https://www.tutorialspoint.com/batch_script/" to "shell/docs/www"
+    - basically you find the next button at '<div class="button " id="btn_top_next">' and follow that link until there's no next button
+    - download all images to "shell/docs/www" too
+    - convert those web pages to markdown in "shell/docs" and move used images to "shell/docs/imgs". Only convert the main text information.
+- Implemented basic shell with echo, set, cd, pwd, cls, pause commands
+- Implemented batch file execution support
+- Implemented @echo off functionality
+- Implemented environment variable expansion (%VAR%)
+- Implemented path conversion between Windows and Linux formats
+- Implemented directory mounting capabilities
