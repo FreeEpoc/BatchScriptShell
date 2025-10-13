@@ -1,4 +1,7 @@
 bss
+shell
+shell_new
+shell_original
 venv/
 *.pyc
 __pycache__/
