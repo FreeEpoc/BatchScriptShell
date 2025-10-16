@@ -47,11 +47,36 @@ extern char* env_stack[32][256];
 extern int env_stack_size[32];
 extern int env_stack_level;
 
+// Structure to store label information
+typedef struct {
+    char name[256];
+    int line_number;
+} Label;
+
+// Structure to store call stack information for CALL/RETURN
+typedef struct {
+    int return_line;
+} CallStackEntry;
+
+// Global variables for GOTO functionality
+extern Label labels[1000];  // Support up to 1000 labels
+extern int num_labels;
+
+// Global variables for CALL functionality
+extern CallStackEntry call_stack[100];  // Support up to 100 nested calls
+extern int call_stack_size;
+
+// Additional function prototypes
+int parse_batch_labels(FILE* batch_file, Label* label_list, int* num_labels_ptr);
+int is_label_line(char* line);
+void extract_label_name(char* line, char* label_name);
+
 // Function prototypes
 int initialize_shell();
 int execute_command(char* command);
 int execute_builtin_command(char** args, int arg_count);
 int execute_external_command(char** args, int arg_count);
+int execute_pipe_command(char** args, int arg_count, int pipe_pos);
 char* expand_variables(char* command);
 char* convert_path(char* path);
 char* convert_path_to_windows(char* path);
@@ -68,5 +93,19 @@ int handle_help(char** args, int arg_count);
 int handle_setlocal(char** args, int arg_count);
 int handle_endlocal(char** args, int arg_count);
 int handle_if(char** args, int arg_count);
+int handle_for_loop(char** args, int arg_count);
+int handle_mkdir(char** args, int arg_count);
+int handle_rmdir(char** args, int arg_count);
+int handle_del(char** args, int arg_count);
+int handle_copy(char** args, int arg_count);
+int handle_move(char** args, int arg_count);
+int handle_type(char** args, int arg_count);
+int handle_dir(char** args, int arg_count);
+int handle_date(char** args, int arg_count);
+int handle_time(char** args, int arg_count);
+int handle_more(char** args, int arg_count);
+int handle_sort(char** args, int arg_count);
+int handle_find(char** args, int arg_count);
+int handle_choice(char** args, int arg_count);
 
 #endif // SHELL_H

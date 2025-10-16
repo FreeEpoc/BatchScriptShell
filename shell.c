@@ -1,4 +1,5 @@
 #include "shell.h"
+#include <time.h>
 
 /* 
  * BSS (Batch Script Shell) - A shell program that interprets batch commands
@@ -372,15 +373,7 @@ int execute_command(char* command) {
 }
 
 // Structure to store label information
-typedef struct {
-    char name[256];
-    int line_number;
-} Label;
 
-// Structure to store call stack information for CALL/RETURN
-typedef struct {
-    int return_line;
-} CallStackEntry;
 
 // Global variables for GOTO functionality
 Label labels[1000];  // Support up to 1000 labels
@@ -523,6 +516,8 @@ int execute_builtin_command(char** args, int arg_count) {
         return execute_external_command(args, arg_count);
     } else if (strcmp(args[0], "type") == 0 || strcmp(args[0], "cat") == 0) {
         return execute_external_command(args, arg_count);
+    } else if (strcmp(args[0], "for") == 0) {
+        return handle_for_loop(args, arg_count);
     } else {
         // Not a built-in command, try external command
         return execute_external_command(args, arg_count);
@@ -530,6 +525,69 @@ int execute_builtin_command(char** args, int arg_count) {
 }
 
 int execute_external_command(char** args, int arg_count) {
+    // Check for pipe operators in the command
+    int pipe_pos = -1;
+    for (int i = 0; i < arg_count; i++) {
+        if (strcmp(args[i], "|") == 0) {
+            pipe_pos = i;
+            break;
+        }
+    }
+    
+    if (pipe_pos != -1) {
+        // Handle piping between commands
+        return execute_pipe_command(args, arg_count, pipe_pos);
+    }
+    
+    // Check for redirection operators in the command
+    char* input_redirect = NULL;
+    char* output_redirect = NULL;
+    char* error_redirect = NULL;
+    int append_mode = 0;
+    int args_count = arg_count;
+    
+    // Parse arguments to find redirection operators
+    for (int i = 0; i < arg_count; i++) {
+        if (strcmp(args[i], ">") == 0 || strcmp(args[i], ">>") == 0) {
+            if (i + 1 >= arg_count) {
+                fprintf(stderr, "Syntax error: No file specified after redirection operator\n");
+                return 1;
+            }
+            
+            output_redirect = args[i + 1];
+            append_mode = (strcmp(args[i], ">>") == 0) ? 1 : 0;
+            args[i] = NULL;  // Terminate the argument list before redirection
+            args_count = i;
+            break;
+        } else if (strcmp(args[i], "<") == 0) {
+            if (i + 1 >= arg_count) {
+                fprintf(stderr, "Syntax error: No file specified after input redirection operator\n");
+                return 1;
+            }
+            
+            input_redirect = args[i + 1];
+            args[i] = NULL;  // Terminate the argument list before redirection
+            args_count = i;
+            break;
+        } else if (strcmp(args[i], "2>") == 0) {
+            if (i + 1 >= arg_count) {
+                fprintf(stderr, "Syntax error: No file specified after error redirection operator\n");
+                return 1;
+            }
+            
+            error_redirect = args[i + 1];
+            args[i] = NULL;  // Terminate the argument list before redirection
+            args_count = i;
+            break;
+        } else if (strcmp(args[i], "2>&1") == 0) {
+            // Redirect stderr to stdout
+            error_redirect = "STDOUT";
+            args[i] = NULL;  // Terminate the argument list before redirection
+            args_count = i;
+            break;
+        }
+    }
+    
     // Fork and execute external command
     pid_t pid = fork();
     
@@ -537,8 +595,59 @@ int execute_external_command(char** args, int arg_count) {
         perror("fork");
         return 1;
     } else if (pid == 0) {
-        // Child process - execute command
-        execvp(args[0], args);
+        // Child process - handle redirection and execute command
+        
+        // Handle input redirection
+        if (input_redirect) {
+            int input_fd = open(input_redirect, O_RDONLY);
+            if (input_fd < 0) {
+                perror("Error opening input file for redirection");
+                exit(1);
+            }
+            dup2(input_fd, STDIN_FILENO);
+            close(input_fd);
+        }
+        
+        // Handle output redirection
+        if (output_redirect) {
+            int output_fd;
+            if (append_mode) {
+                output_fd = open(output_redirect, O_WRONLY | O_CREAT | O_APPEND, 0644);
+            } else {
+                output_fd = open(output_redirect, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+            }
+            if (output_fd < 0) {
+                perror("Error opening output file for redirection");
+                exit(1);
+            }
+            dup2(output_fd, STDOUT_FILENO);
+            close(output_fd);
+        }
+        
+        // Handle error redirection
+        if (error_redirect) {
+            if (strcmp(error_redirect, "STDOUT") == 0) {
+                // Redirect stderr to stdout
+                dup2(STDOUT_FILENO, STDERR_FILENO);
+            } else {
+                int error_fd = open(error_redirect, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+                if (error_fd < 0) {
+                    perror("Error opening error file for redirection");
+                    exit(1);
+                }
+                dup2(error_fd, STDERR_FILENO);
+                close(error_fd);
+            }
+        }
+        
+        // Create a new argument list without redirection parts
+        char* new_args[args_count + 1];
+        for (int i = 0; i < args_count; i++) {
+            new_args[i] = args[i];
+        }
+        new_args[args_count] = NULL;
+        
+        execvp(new_args[0], new_args);
         perror("Command execution failed");
         exit(1);
     } else {
@@ -547,6 +656,77 @@ int execute_external_command(char** args, int arg_count) {
         waitpid(pid, &status, 0);
         return WEXITSTATUS(status);
     }
+}
+
+// Function to execute command with pipe
+int execute_pipe_command(char** args, int arg_count, int pipe_pos) {
+    // Create the pipe
+    int pipefd[2];
+    if (pipe(pipefd) == -1) {
+        perror("pipe");
+        return 1;
+    }
+    
+    pid_t pid1 = fork();
+    if (pid1 == -1) {
+        perror("fork");
+        return 1;
+    }
+    
+    if (pid1 == 0) {
+        // First command in pipe (left side)
+        close(pipefd[0]); // Close read end
+        dup2(pipefd[1], STDOUT_FILENO); // Redirect stdout to pipe write end
+        close(pipefd[1]);
+        
+        // Prepare arguments for first command
+        char* cmd1_args[pipe_pos + 1];
+        for (int i = 0; i < pipe_pos; i++) {
+            cmd1_args[i] = args[i];
+        }
+        cmd1_args[pipe_pos] = NULL;
+        
+        execvp(cmd1_args[0], cmd1_args);
+        perror("First command in pipe failed");
+        exit(1);
+    }
+    
+    pid_t pid2 = fork();
+    if (pid2 == -1) {
+        perror("fork");
+        return 1;
+    }
+    
+    if (pid2 == 0) {
+        // Second command in pipe (right side)
+        close(pipefd[1]); // Close write end
+        dup2(pipefd[0], STDIN_FILENO); // Redirect stdin to pipe read end
+        close(pipefd[0]);
+        
+        // Prepare arguments for second command
+        int remaining_args = arg_count - pipe_pos - 1;
+        char* cmd2_args[remaining_args + 1];
+        for (int i = 0; i < remaining_args; i++) {
+            cmd2_args[i] = args[pipe_pos + 1 + i];
+        }
+        cmd2_args[remaining_args] = NULL;
+        
+        execvp(cmd2_args[0], cmd2_args);
+        perror("Second command in pipe failed");
+        exit(1);
+    }
+    
+    // Parent process
+    close(pipefd[0]);
+    close(pipefd[1]);
+    
+    // Wait for both processes
+    int status1, status2;
+    waitpid(pid1, &status1, 0);
+    waitpid(pid2, &status2, 0);
+    
+    // Return the exit status of the last command in the pipe
+    return WEXITSTATUS(status2);
 }
 
 char* expand_variables(char* command) {
@@ -1061,9 +1241,18 @@ int handle_pause(char** args, int arg_count) {
     printf("Press any key to continue . . . ");
     fflush(stdout);
     
-    // Simple pause implementation - wait for input
-    char c;
-    read(0, &c, 1);
+    // Open /dev/tty to read directly from terminal, not from stdin which might be redirected
+    int tty_fd = open("/dev/tty", O_RDONLY);
+    if (tty_fd == -1) {
+        // Fallback to stdin if /dev/tty is not available
+        char c;
+        read(0, &c, 1);
+    } else {
+        char c;
+        read(tty_fd, &c, 1);
+        close(tty_fd);
+    }
+    
     printf("\n");
     
     return 0;
@@ -1478,4 +1667,575 @@ int handle_if(char** args, int arg_count) {
     }
     
     return 0;
+}
+
+// Function to handle FOR loops - DOS-style iteration
+int handle_for_loop(char** args, int arg_count) {
+    if (arg_count < 6) {
+        printf("FOR: Invalid syntax. Usage: FOR %%<variable> IN (list) DO command\n");
+        return 1;
+    }
+    
+    // Parse FOR syntax: FOR %%variable IN (item1,item2,item3,...) DO command
+    char* variable = args[1];  // This should be %%X format
+    if (strlen(variable) < 3 || variable[0] != '%' || variable[1] != '%') {
+        printf("FOR: Invalid variable format. Use %%X where X is the variable name.\n");
+        return 1;
+    }
+    
+    char var_name = variable[2];  // The actual variable character
+    if (strlen(variable) > 3) {
+        printf("FOR: Variable name should be a single character after %%. Use %%X format.\n");
+        return 1;
+    }
+    
+    // Check for "IN" keyword
+    if (strcasecmp(args[2], "IN") != 0) {
+        printf("FOR: Expected 'IN' keyword. Usage: FOR %%<variable> IN (list) DO command\n");
+        return 1;
+    }
+    
+    // Extract the list in parentheses (args[3])
+    char* list_str = args[3];
+    if (strlen(list_str) < 3 || list_str[0] != '(' || list_str[strlen(list_str)-1] != ')') {
+        printf("FOR: List must be enclosed in parentheses. Usage: FOR %%<variable> IN (item1,item2,item3) DO command\n");
+        return 1;
+    }
+    
+    // Remove the parentheses
+    char list_cleaned[MAX_COMMAND_LENGTH];
+    strncpy(list_cleaned, list_str + 1, strlen(list_str) - 2);  // Skip first '(' and last ')'
+    list_cleaned[strlen(list_str) - 2] = '\0';
+    
+    // Check for "DO" keyword
+    if (strcasecmp(args[4], "DO") != 0) {
+        printf("FOR: Expected 'DO' keyword. Usage: FOR %%<variable> IN (list) DO command\n");
+        return 1;
+    }
+    
+    // Prepare the command template by combining remaining arguments
+    char command_template[MAX_COMMAND_LENGTH];
+    command_template[0] = '\0';
+    for (int i = 5; i < arg_count; i++) {
+        strcat(command_template, args[i]);
+        if (i < arg_count - 1) strcat(command_template, " ");
+    }
+    
+    // Tokenize the list by commas to get individual items
+    char* token = strtok(list_cleaned, ",");
+    while (token != NULL) {
+        // Skip leading spaces in the token
+        while (*token == ' ') token++;
+        
+        // Replace the variable in the command template with the current token value
+        char final_command[MAX_COMMAND_LENGTH];
+        strcpy(final_command, command_template);
+        
+        // Replace %variable% with the actual token value
+        char var_pattern[4];
+        snprintf(var_pattern, sizeof(var_pattern), "%%%c", var_name);
+        
+        // Simple replacement - find and replace the variable pattern with the token
+        char temp[MAX_COMMAND_LENGTH];
+        char* pos = strstr(final_command, var_pattern);
+        if (pos != NULL) {
+            // Create new string with substitution
+            *pos = '\0';  // Terminate at position of pattern
+            strcpy(temp, final_command);  // Copy part before pattern
+            strcat(temp, token);          // Add the token value
+            strcat(temp, pos + 3);        // Add part after pattern (skip '%%X')
+            strcpy(final_command, temp);  // Copy back to final command
+        }
+        
+        // Execute the command with the substituted variable
+        execute_command(final_command);
+        
+        // Get next token
+        token = strtok(NULL, ",");
+    }
+    
+    return 0;
+}
+
+// Function to handle mkdir command (create directory)
+int handle_mkdir(char** args, int arg_count) {
+    if (arg_count != 2) {
+        printf("Usage: MD directory_name or MKDIR directory_name\n");
+        return 1;
+    }
+    
+    // Create directory with default permissions
+    if (mkdir(args[1], 0755) == -1) {
+        perror("MD/MKDIR");
+        return 1;
+    }
+    
+    return 0;
+}
+
+// Function to handle rmdir command (remove directory)
+int handle_rmdir(char** args, int arg_count) {
+    if (arg_count != 2) {
+        printf("Usage: RD directory_name or RMDIR directory_name\n");
+        return 1;
+    }
+    
+    if (rmdir(args[1]) == -1) {
+        perror("RD/RMDIR");
+        return 1;
+    }
+    
+    return 0;
+}
+
+// Function to handle del command (delete files)
+int handle_del(char** args, int arg_count) {
+    if (arg_count < 2) {
+        printf("Usage: DEL file1 [file2...] or ERASE file1 [file2...]\n");
+        return 1;
+    }
+    
+    int result = 0;
+    for (int i = 1; i < arg_count; i++) {
+        if (unlink(args[i]) == -1) {
+            perror("DEL/ERASE");
+            result = 1;  // Set error result but continue with other files
+        }
+    }
+    
+    return result;
+}
+
+// Function to handle copy command
+int handle_copy(char** args, int arg_count) {
+    if (arg_count != 3) {
+        printf("Usage: COPY source destination\n");
+        return 1;
+    }
+    
+    // Use system copy command for now
+    char command[MAX_COMMAND_LENGTH];
+    snprintf(command, sizeof(command), "cp \"%s\" \"%s\"", args[1], args[2]);
+    
+    int result = system(command);
+    if (result == -1) {
+        perror("COPY");
+        return 1;
+    }
+    
+    return WEXITSTATUS(result);
+}
+
+// Function to handle move command
+int handle_move(char** args, int arg_count) {
+    if (arg_count != 3) {
+        printf("Usage: MOVE source destination\n");
+        return 1;
+    }
+    
+    // Use system move command for now
+    char command[MAX_COMMAND_LENGTH];
+    snprintf(command, sizeof(command), "mv \"%s\" \"%s\"", args[1], args[2]);
+    
+    int result = system(command);
+    if (result == -1) {
+        perror("MOVE");
+        return 1;
+    }
+    
+    return WEXITSTATUS(result);
+}
+
+// Function to handle type command (display file contents)
+int handle_type(char** args, int arg_count) {
+    if (arg_count != 2) {
+        printf("Usage: TYPE filename or CAT filename\n");
+        return 1;
+    }
+    
+    FILE* fp = fopen(args[1], "r");
+    if (fp == NULL) {
+        perror("TYPE/CAT");
+        return 1;
+    }
+    
+    char line[1024];
+    while (fgets(line, sizeof(line), fp) != NULL) {
+        printf("%s", line);
+    }
+    
+    fclose(fp);
+    return 0;
+}
+
+// Function to handle dir command (list directory contents)
+int handle_dir(char** args, int arg_count) {
+    // Default to listing current directory if no arguments provided
+    char* directory = ".";
+    if (arg_count > 1) {
+        directory = args[1];
+    }
+    
+    // Use system ls command for now, formatted like Windows dir
+    char command[MAX_COMMAND_LENGTH];
+    snprintf(command, sizeof(command), "ls -la \"%s\"", directory);
+    
+    int result = system(command);
+    if (result == -1) {
+        perror("DIR");
+        return 1;
+    }
+    
+    return WEXITSTATUS(result);
+}
+
+// Function to handle date command
+int handle_date(char** args, int arg_count) {
+    time_t now;
+    struct tm *timeinfo;
+    
+    time(&now);
+    timeinfo = localtime(&now);
+    
+    // Format to look like DOS date output
+    printf("Current date: %02d/%02d/%04d\n", 
+           timeinfo->tm_mon + 1, 
+           timeinfo->tm_mday, 
+           timeinfo->tm_year + 1900);
+    
+    // If no arguments, just show the date, but in DOS you would be prompted to change it
+    if (arg_count == 1) {
+        printf("Enter new date (mm-dd-yy) or press Enter for current date: ");
+        fflush(stdout);
+        // In a real implementation, we would read the input and parse it
+        // For now, just showing the current date
+    }
+    
+    return 0;
+}
+
+// Function to handle time command
+int handle_time(char** args, int arg_count) {
+    time_t now;
+    struct tm *timeinfo;
+    
+    time(&now);
+    timeinfo = localtime(&now);
+    
+    // Format to look like DOS time output
+    printf("Current time: %02d:%02d:%02d.%02d\n", 
+           timeinfo->tm_hour, 
+           timeinfo->tm_min, 
+           timeinfo->tm_sec,
+           0); // DOS shows hundredths of seconds, but we'll just show 0
+    
+    // If no arguments, just show the time, but in DOS you would be prompted to change it
+    if (arg_count == 1) {
+        printf("Enter new time (hh:mm:ss) or press Enter for current time: ");
+        fflush(stdout);
+        // In a real implementation, we would read the input and parse it
+        // For now, just showing the current time
+    }
+    
+    return 0;
+}
+
+// Function to handle more command (paginate output)
+int handle_more(char** args, int arg_count) {
+    if (arg_count == 1) {
+        // If no arguments, read from stdin (like more command does)
+        char line[1024];
+        int line_count = 0;
+        
+        while (fgets(line, sizeof(line), stdin) != NULL) {
+            printf("%s", line);
+            line_count++;
+            
+            // Pause after every 24 lines (standard DOS more behavior)
+            if (line_count % 24 == 0) {
+                printf("-- More -- Press any key to continue ...");
+                fflush(stdout);
+                
+                char c;
+                read(0, &c, 1);
+                printf("\n");
+                
+                // If user presses 'q' or 'Q', quit
+                if (c == 'q' || c == 'Q') {
+                    break;
+                }
+            }
+        }
+    } else {
+        // Process each file specified as an argument
+        for (int i = 1; i < arg_count; i++) {
+            FILE* fp = fopen(args[i], "r");
+            if (fp == NULL) {
+                perror("MORE");
+                continue;
+            }
+            
+            char line[1024];
+            int line_count = 0;
+            
+            while (fgets(line, sizeof(line), fp) != NULL) {
+                printf("%s", line);
+                line_count++;
+                
+                // Pause after every 24 lines
+                if (line_count % 24 == 0) {
+                    printf("-- More -- Press any key to continue ...");
+                    fflush(stdout);
+                    
+                    char c;
+                    read(0, &c, 1);
+                    printf("\n");
+                    
+                    // If user presses 'q' or 'Q', quit
+                    if (c == 'q' || c == 'Q') {
+                        fclose(fp);
+                        return 0;
+                    }
+                }
+            }
+            
+            fclose(fp);
+        }
+    }
+    
+    return 0;
+}
+
+// Function to handle sort command (sort input lines)
+int handle_sort(char** args, int arg_count) {
+    if (arg_count == 1) {
+        // Sort stdin input
+        char lines[1000][1024];  // Buffer to store lines
+        int line_count = 0;
+        
+        while (line_count < 1000) {
+            if (fgets(lines[line_count], sizeof(lines[line_count]), stdin) == NULL) {
+                break;
+            }
+            line_count++;
+        }
+        
+        // Simple bubble sort
+        for (int i = 0; i < line_count - 1; i++) {
+            for (int j = 0; j < line_count - i - 1; j++) {
+                if (strcmp(lines[j], lines[j + 1]) > 0) {
+                    // Swap lines
+                    char temp[1024];
+                    strcpy(temp, lines[j]);
+                    strcpy(lines[j], lines[j + 1]);
+                    strcpy(lines[j + 1], temp);
+                }
+            }
+        }
+        
+        // Print sorted lines
+        for (int i = 0; i < line_count; i++) {
+            printf("%s", lines[i]);
+        }
+    } else {
+        // Sort content of specified files
+        for (int i = 1; i < arg_count; i++) {
+            FILE* fp = fopen(args[i], "r");
+            if (fp == NULL) {
+                perror("SORT");
+                continue;
+            }
+            
+            char lines[1000][1024];  // Buffer to store lines
+            int line_count = 0;
+            
+            while (line_count < 1000 && 
+                   fgets(lines[line_count], sizeof(lines[line_count]), fp) != NULL) {
+                line_count++;
+            }
+            
+            fclose(fp);
+            
+            // Simple bubble sort
+            for (int j = 0; j < line_count - 1; j++) {
+                for (int k = 0; k < line_count - j - 1; k++) {
+                    if (strcmp(lines[k], lines[k + 1]) > 0) {
+                        // Swap lines
+                        char temp[1024];
+                        strcpy(temp, lines[k]);
+                        strcpy(lines[k], lines[k + 1]);
+                        strcpy(lines[k + 1], temp);
+                    }
+                }
+            }
+            
+            // Print sorted lines
+            for (int j = 0; j < line_count; j++) {
+                printf("%s", lines[j]);
+            }
+        }
+    }
+    
+    return 0;
+}
+
+// Function to handle find command (search for text in files)
+int handle_find(char** args, int arg_count) {
+    if (arg_count < 2) {
+        printf("Usage: FIND \"text_to_find\" [file1] [file2] ...\n");
+        return 1;
+    }
+    
+    char* search_text = args[1];
+    int files_specified = (arg_count > 2);
+    
+    if (!files_specified) {
+        // Search in stdin
+        char line[1024];
+        int line_number = 1;
+        int matches_found = 0;
+        
+        while (fgets(line, sizeof(line), stdin) != NULL) {
+            if (strstr(line, search_text) != NULL) {
+                printf("%s", line);
+                matches_found++;
+            }
+            line_number++;
+        }
+        
+        if (matches_found == 0) {
+            printf("----------\n");
+        }
+    } else {
+        // Search in specified files
+        for (int i = 2; i < arg_count; i++) {
+            FILE* fp = fopen(args[i], "r");
+            if (fp == NULL) {
+                perror("FIND");
+                continue;
+            }
+            
+            char line[1024];
+            int line_number = 1;
+            int matches_found = 0;
+            
+            printf("---------- %s\n", args[i]);
+            
+            while (fgets(line, sizeof(line), fp) != NULL) {
+                if (strstr(line, search_text) != NULL) {
+                    printf("%s", line);
+                    matches_found++;
+                }
+                line_number++;
+            }
+            
+            if (matches_found == 0) {
+                printf("----------\n");
+            }
+            
+            fclose(fp);
+        }
+    }
+    
+    return 0;
+}
+
+// Function to handle choice command (user input options)
+int handle_choice(char** args, int arg_count) {
+    if (arg_count < 2) {
+        printf("Usage: CHOICE [/C[:]choices] [/N] [/S] text\n");
+        printf("  /C[:]    Specifies allowable keys. Default is: yn.\n");
+        printf("  /N       Do not display the choices at end of prompt.\n");
+        printf("  /S       Enables case-sensitive choices to be selected.\n");
+        printf("Example: CHOICE /C:YN /S \"Continue?\"\n");
+        return 1;
+    }
+    
+    // Default choices
+    char choices[] = "YN";
+    int display_choices = 1;
+    int case_sensitive = 0;
+    char* prompt = NULL;
+    
+    // Parse command line arguments
+    for (int i = 1; i < arg_count; i++) {
+        if (args[i][0] == '/' || args[i][0] == '-') {
+            if (strlen(args[i]) >= 2) {
+                if (args[i][1] == 'C' || args[i][1] == 'c') {
+                    // Extract choices from /C: or /C format
+                    if (args[i][2] == ':') {
+                        strcpy(choices, args[i] + 3);
+                    } else if (i + 1 < arg_count) {
+                        strcpy(choices, args[i + 1]);
+                        i++;  // Skip next argument since it was used as choices
+                    }
+                } else if (args[i][1] == 'N' || args[i][1] == 'n') {
+                    display_choices = 0;
+                } else if (args[i][1] == 'S' || args[i][1] == 's') {
+                    case_sensitive = 1;
+                }
+            }
+        } else {
+            // This is the prompt text
+            prompt = args[i];
+        }
+    }
+    
+    if (prompt == NULL) {
+        prompt = "Continue?";
+    }
+    
+    // Display the prompt
+    printf("%s", prompt);
+    
+    // Display choices if needed
+    if (display_choices) {
+        printf(" [");
+        for (int i = 0; i < strlen(choices); i++) {
+            if (i > 0) printf(", ");
+            printf("%c", choices[i]);
+        }
+        printf("]? ");
+    } else {
+        printf(" ");
+    }
+    fflush(stdout);
+    
+    // Get user input
+    char input[10];
+    if (fgets(input, sizeof(input), stdin) != NULL) {
+        // Get the first character from the input
+        char user_choice = input[0];
+        
+        // Convert to uppercase if not case sensitive
+        if (!case_sensitive && user_choice >= 'a' && user_choice <= 'z') {
+            user_choice = user_choice - 'a' + 'A';
+        }
+        
+        // Check if user choice is valid
+        int valid = 0;
+        for (int i = 0; i < strlen(choices); i++) {
+            char choice = choices[i];
+            if (!case_sensitive && choice >= 'a' && choice <= 'z') {
+                choice = choice - 'a' + 'A';
+            }
+            
+            if (user_choice == choice) {
+                valid = 1;
+                break;
+            }
+        }
+        
+        if (valid) {
+            printf("\nYou selected: %c\n", user_choice);
+            // Set ERRORLEVEL to the position of the selected choice (1-indexed)
+            // For now, we'll just return success
+            return 0;
+        } else {
+            printf("\nInvalid choice. Valid choices are: %s\n", choices);
+            return 1;
+        }
+    }
+    
+    return 1;
 }

@@ -1,10 +1,7 @@
 # Tasks
 ## TODO
-- change #define "v1.0" to be "latest"
-- CLI should feel like Windows Command Prompt or cmd in Wine. Default prompt in directory "C:\Users\sblo" is: "C:\Users\sblo>"
-- add "-h" and "--help" support for main program
-- add "help" command upport in the CLI command loop
-- use md files in docs directory to create implementation stub of the shell program in C (COMPLETED)
+- Implement command history: F3 copies previous command. Support unix style history with arrow keys up and down to scroll through previous
+    - Implement previous history browsing by writing the beginning of the line and then selecting with arrows history-lines, which matches the beginning of the line that user 
 - Implement command line argument support (%1, %2, %3, etc.)
 - Implement SETLOCAL and ENDLOCAL commands for local variable scoping
 - Implement IF/ELSE statement support
@@ -62,3 +59,8 @@
 - Implemented environment variable expansion (%VAR%)
 - Implemented path conversion between Windows and Linux formats
 - Implemented directory mounting capabilities
+- change #define "v1.0" to be latest
+- CLI should feel like Windows Command Prompt or cmd in Wine. Default prompt in directory "C:\Users\sblo" is: "C:\Users\sblo>"
+- add "-h" and "--help" support for main program
+- add "help" command upport in the CLI command loop
+- use md files in docs directory to create implementation stub of the shell program in C (COMPLETED)
