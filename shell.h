@@ -99,6 +99,7 @@ int handle_rmdir(char** args, int arg_count);
 int handle_del(char** args, int arg_count);
 int handle_copy(char** args, int arg_count);
 int handle_move(char** args, int arg_count);
+int handle_ren(char** args, int arg_count);
 int handle_type(char** args, int arg_count);
 int handle_dir(char** args, int arg_count);
 int handle_date(char** args, int arg_count);

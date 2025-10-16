@@ -58,6 +58,13 @@ int handle_if(char** args, int arg_count);
 int main(int argc, char **argv) {
     char input[MAX_COMMAND_LENGTH];
     
+    // Store the original working directory before initialization (for relative path resolution)
+    char original_cwd[MAX_PATH_LENGTH];
+    if (getcwd(original_cwd, sizeof(original_cwd)) == NULL) {
+        perror("getcwd to store original directory");
+        return 1;
+    }
+    
     // Check for help flags
     if (argc == 2) {
         if (strcmp(argv[1], "-h") == 0 || strcmp(argv[1], "--help") == 0) {
@@ -96,9 +103,40 @@ int main(int argc, char **argv) {
             is_batch_mode = 1;  // Set batch mode flag
             
             // Execute batch file
-            FILE *batch_file = fopen(argv[1], "r");
+            // Handle relative paths by checking if the path starts with / (absolute) or Windows drive
+            char batch_file_path[MAX_PATH_LENGTH];
+            if (argv[1][0] == '/') {
+                // Absolute path on Unix-like systems
+                strncpy(batch_file_path, argv[1], MAX_PATH_LENGTH - 1);
+                batch_file_path[MAX_PATH_LENGTH - 1] = '\0';
+            } else if (strlen(argv[1]) >= 3 && argv[1][1] == ':' && (argv[1][2] == '/' || argv[1][2] == '\\')) {
+                // Windows absolute path like C:\...
+                strncpy(batch_file_path, argv[1], MAX_PATH_LENGTH - 1);
+                batch_file_path[MAX_PATH_LENGTH - 1] = '\0';
+            } else {
+                // Relative path - resolve against original directory where program was started
+                // Make sure we have enough space for original_cwd + '/' + relative_path + '\0'
+                if (strlen(original_cwd) + 1 + strlen(argv[1]) >= MAX_PATH_LENGTH) {
+                    fprintf(stderr, "Path too long: %s/%s\n", original_cwd, argv[1]);
+                    return 1;
+                }
+                
+                // Build the full path: original_cwd + '/' + relative_path
+                strcpy(batch_file_path, original_cwd);
+                
+                // Add path separator if needed
+                if (batch_file_path[strlen(batch_file_path) - 1] != '/') {
+                    strcat(batch_file_path, "/");
+                }
+                
+                // Append the relative path
+                strcat(batch_file_path, argv[1]);
+            }
+            
+            FILE *batch_file = fopen(batch_file_path, "r");
             if (batch_file == NULL) {
-                perror("Error opening batch file");
+                fprintf(stderr, "Error opening batch file: %s\n", batch_file_path);
+                perror("fopen");
                 return 1;
             }
             
@@ -216,7 +254,7 @@ int main(int argc, char **argv) {
                                 free(batch_lines[i]);
                             }
                             fclose(batch_file);
-                            return exit_code;
+                            return exit_code;  // If EXIT is called in batch, exit the program
                         }
                     } else {
                         // Execute normal command
@@ -234,7 +272,9 @@ int main(int argc, char **argv) {
             }
             
             fclose(batch_file);
-            return 0;
+            
+            // After executing batch file, reset batch mode flag
+            is_batch_mode = 0;  // Reset batch mode flag
         }
     }
     
@@ -485,7 +525,8 @@ int execute_builtin_command(char** args, int arg_count) {
         return handle_endlocal(args, arg_count);
     } else if (strcmp(args[0], "help") == 0) {
         return handle_help(args, arg_count);
-    } else if (strcmp(args[0], "echo") == 0) {
+    } else if (strcmp(args[0], "echo") == 0 || 
+               (strlen(args[0]) >= 5 && strncmp(args[0], "echo.", 5) == 0)) {  // Support echo. syntax
         return handle_echo(args, arg_count);
     } else if (strcmp(args[0], "set") == 0) {
         return handle_set(args, arg_count);
@@ -507,15 +548,19 @@ int execute_builtin_command(char** args, int arg_count) {
         // For now, just execute as external command
         return execute_external_command(args, arg_count);
     } else if (strcmp(args[0], "rmdir") == 0 || strcmp(args[0], "rd") == 0) {
-        return execute_external_command(args, arg_count);
+        return handle_rmdir(args, arg_count);
     } else if (strcmp(args[0], "del") == 0 || strcmp(args[0], "erase") == 0) {
         return execute_external_command(args, arg_count);
+    } else if (strcmp(args[0], "ren") == 0 || strcmp(args[0], "rename") == 0) {
+        return handle_ren(args, arg_count);
     } else if (strcmp(args[0], "copy") == 0) {
-        return execute_external_command(args, arg_count);
+        return handle_copy(args, arg_count);
     } else if (strcmp(args[0], "move") == 0) {
         return execute_external_command(args, arg_count);
     } else if (strcmp(args[0], "type") == 0 || strcmp(args[0], "cat") == 0) {
-        return execute_external_command(args, arg_count);
+        return handle_type(args, arg_count);
+    } else if (strcmp(args[0], "dir") == 0) {
+        return handle_dir(args, arg_count);
     } else if (strcmp(args[0], "for") == 0) {
         return handle_for_loop(args, arg_count);
     } else {
@@ -943,6 +988,31 @@ int print_working_directory() {
 }
 
 int handle_echo(char** args, int arg_count) {
+    // Check if this is the special "echo." command (print blank line)
+    if (strlen(args[0]) >= 5 && strncmp(args[0], "echo.", 5) == 0) {
+        if (arg_count == 1) {
+            // This is just "echo." - print blank line (DOS behavior)
+            printf("\n");
+            return 0;
+        } else if (arg_count >= 2) {
+            // Handle cases like "echo. message" - print the message with a newline
+            // Skip any potential "." argument and print remaining args
+            int start_idx = 1;
+            if (arg_count > 1 && strlen(args[1]) == 1 && args[1][0] == '.') {
+                start_idx = 2; // Skip the "." argument
+            }
+            
+            for (int i = start_idx; i < arg_count; i++) {
+                printf("%s", args[i]);
+                if (i < arg_count - 1) {
+                    printf(" ");
+                }
+            }
+            printf("\n");
+            return 0;
+        }
+    }
+    
     if (arg_count < 2) {
         printf("ECHO is %s\n", echo_enabled ? "on" : "off");
         return 0;
@@ -1467,8 +1537,8 @@ int handle_endlocal(char** args, int arg_count) {
 }
 
 int handle_if(char** args, int arg_count) {
-    if (arg_count < 4) {
-        printf("IF: Invalid syntax. Usage: IF [condition] (EQU/NEQ/LSS/GTR/LEQ/GEQ) [value] (AND/OR [condition] (EQU/NEQ/LSS/GTR/LEQ/GEQ) [value]) (ECHO/SET/other command) [ELSE (ECHO/SET/other command)]\n");
+    if (arg_count < 3) {
+        printf("IF: Invalid syntax. Usage: IF [NOT] [condition] [(EQU/NEQ/LSS/GTR/LEQ/GEQ) [value] [AND/OR [condition] (EQU/NEQ/LSS/GTR/LEQ/GEQ) [value])] (ECHO/SET/other command) [ELSE (ECHO/SET/other command)] or IF [NOT] EXIST [filename] (ECHO/SET/other command) [ELSE (ECHO/SET/other command)]\n");
         return 1;
     }
     
@@ -1478,13 +1548,104 @@ int handle_if(char** args, int arg_count) {
     if (strcasecmp(args[1], "NOT") == 0) {
         is_negated = 1;
         start_idx = 2;
-        if (arg_count < 5) {
+        if (arg_count < 4) {
             printf("IF: Invalid syntax with NOT operator\n");
             return 1;
         }
     }
     
-    // Parse and evaluate the conditions
+    // Check for EXIST condition
+    if (strcasecmp(args[start_idx], "EXIST") == 0) {
+        if (arg_count < start_idx + 2) {
+            printf("IF: Invalid syntax for EXIST. Usage: IF [NOT] EXIST [filename] (ECHO/SET/other command) [ELSE (ECHO/SET/other command)]\n");
+            return 1;
+        }
+        
+        // Check if file exists
+        char* filename = args[start_idx + 1];
+        struct stat buffer;
+        int file_exists = (stat(filename, &buffer) == 0);
+        
+        // Apply negation if needed
+        if (is_negated) {
+            file_exists = !file_exists;
+        }
+        
+        // Find the ELSE keyword if it exists
+        int else_index = -1;
+        for (int i = start_idx + 2; i < arg_count; i++) {
+            if (strcasecmp(args[i], "ELSE") == 0) {
+                else_index = i;
+                break;
+            }
+        }
+        
+        if (file_exists) {
+            // Execute the command after EXIST (before ELSE)
+            if (start_idx + 2 < arg_count) {
+                char* command = args[start_idx + 2];
+                
+                if (strcmp(command, "ECHO") == 0) {
+                    // Execute echo with remaining arguments before ELSE
+                    for (int i = start_idx + 3; i < ((else_index != -1) ? else_index : arg_count); i++) {
+                        printf("%s", args[i]);
+                        if (i < ((else_index != -1) ? else_index : arg_count) - 1) printf(" ");
+                    }
+                    printf("\n");
+                } else if (strcmp(command, "SET") == 0) {
+                    // Execute SET command
+                    char* set_args[64];
+                    int new_arg_count = 0;
+                    for (int i = start_idx + 2; i < ((else_index != -1) ? else_index : arg_count) && new_arg_count < 64; i++) {
+                        set_args[new_arg_count++] = args[i];
+                    }
+                    handle_set(set_args, new_arg_count);
+                } else {
+                    // Execute as external command
+                    char* cmd_args[64];
+                    int new_arg_count = 0;
+                    for (int i = start_idx + 2; i < ((else_index != -1) ? else_index : arg_count) && new_arg_count < 64; i++) {
+                        cmd_args[new_arg_count++] = args[i];
+                    }
+                    execute_external_command(cmd_args, new_arg_count);
+                }
+            }
+        } else if (else_index != -1) {
+            // Execute the else command (after ELSE)
+            if (else_index + 1 < arg_count) {
+                char* command = args[else_index + 1];
+                
+                if (strcmp(command, "ECHO") == 0) {
+                    // Execute echo with remaining arguments after ELSE
+                    for (int i = else_index + 2; i < arg_count; i++) {
+                        printf("%s", args[i]);
+                        if (i < arg_count - 1) printf(" ");
+                    }
+                    printf("\n");
+                } else if (strcmp(command, "SET") == 0) {
+                    // Execute SET command
+                    char* set_args[64];
+                    int new_arg_count = 0;
+                    for (int i = else_index + 1; i < arg_count && new_arg_count < 64; i++) {
+                        set_args[new_arg_count++] = args[i];
+                    }
+                    handle_set(set_args, new_arg_count);
+                } else {
+                    // Execute as external command
+                    char* cmd_args[64];
+                    int new_arg_count = 0;
+                    for (int i = else_index + 1; i < arg_count && new_arg_count < 64; i++) {
+                        cmd_args[new_arg_count++] = args[i];
+                    }
+                    execute_external_command(cmd_args, new_arg_count);
+                }
+            }
+        }
+        
+        return 0;
+    } else {
+        // Continue with original logic for non-EXIST conditions
+        // Parse and evaluate the conditions
     int final_result = 0;
     int current_idx = start_idx;
     
@@ -1666,6 +1827,7 @@ int handle_if(char** args, int arg_count) {
         }
     }
     
+}
     return 0;
 }
 
@@ -1775,14 +1937,53 @@ int handle_mkdir(char** args, int arg_count) {
 
 // Function to handle rmdir command (remove directory)
 int handle_rmdir(char** args, int arg_count) {
-    if (arg_count != 2) {
-        printf("Usage: RD directory_name or RMDIR directory_name\n");
+    if (arg_count < 2) {
+        printf("Usage: RD [/S] [/Q] directory_name or RMDIR [/S] [/Q] directory_name\n");
         return 1;
     }
     
-    if (rmdir(args[1]) == -1) {
-        perror("RD/RMDIR");
+    int recursive = 0;
+    int quiet = 0;
+    char* directory = NULL;
+    
+    // Parse options
+    for (int i = 1; i < arg_count; i++) {
+        if (strcasecmp(args[i], "/S") == 0) {
+            recursive = 1;
+        } else if (strcasecmp(args[i], "/Q") == 0) {
+            quiet = 1;
+        } else {
+            // The directory to remove (should be the last argument)
+            if (directory != NULL) {
+                // Multiple directory names provided
+                printf("RD/RMDIR: Too many directory names specified\n");
+                return 1;
+            }
+            directory = args[i];
+        }
+    }
+    
+    if (directory == NULL) {
+        printf("RD/RMDIR: No directory specified\n");
         return 1;
+    }
+    
+    if (recursive) {
+        // Use system command for recursive deletion (like Windows RD /S)
+        char command[MAX_COMMAND_LENGTH];
+        snprintf(command, sizeof(command), "rm -rf \"%s\"", directory);
+        int result = system(command);
+        if (result == -1) {
+            perror("RD/RMDIR recursive");
+            return 1;
+        }
+        return WEXITSTATUS(result);
+    } else {
+        // Non-recursive - just use rmdir
+        if (rmdir(directory) == -1) {
+            perror("RD/RMDIR");
+            return 1;
+        }
     }
     
     return 0;
@@ -1813,17 +2014,54 @@ int handle_copy(char** args, int arg_count) {
         return 1;
     }
     
-    // Use system copy command for now
-    char command[MAX_COMMAND_LENGTH];
-    snprintf(command, sizeof(command), "cp \"%s\" \"%s\"", args[1], args[2]);
-    
-    int result = system(command);
-    if (result == -1) {
-        perror("COPY");
+    // Open source file for reading
+    FILE* source = fopen(args[1], "rb");
+    if (source == NULL) {
+        perror("COPY source");
         return 1;
     }
     
-    return WEXITSTATUS(result);
+    // Open destination file for writing
+    FILE* dest = fopen(args[2], "wb");
+    if (dest == NULL) {
+        perror("COPY destination");
+        fclose(source);
+        return 1;
+    }
+    
+    // Copy data from source to destination
+    char buffer[4096];
+    size_t bytes_read;
+    while ((bytes_read = fread(buffer, 1, sizeof(buffer), source)) > 0) {
+        if (fwrite(buffer, 1, bytes_read, dest) != bytes_read) {
+            perror("COPY write");
+            fclose(source);
+            fclose(dest);
+            return 1;
+        }
+    }
+    
+    // Close files
+    fclose(source);
+    fclose(dest);
+    
+    return 0;
+}
+
+// Function to handle ren command (rename files)
+int handle_ren(char** args, int arg_count) {
+    if (arg_count != 3) {
+        printf("Usage: REN old_name new_name or RENAME old_name new_name\n");
+        return 1;
+    }
+    
+    // Use system rename function
+    if (rename(args[1], args[2]) == -1) {
+        perror("REN/RENAME");
+        return 1;
+    }
+    
+    return 0;
 }
 
 // Function to handle move command
