@@ -1011,6 +1011,86 @@ int starts_with(const char* str, const char* prefix) {
     return strncmp(str, prefix, strlen(prefix)) == 0;
 }
 
+// Function to map Windows environment variables to Linux equivalents
+char* map_windows_env_var(const char* var_name) {
+    if (strcmp(var_name, "USERPROFILE") == 0) {
+        // USERPROFILE maps to HOME
+        return getenv("HOME");
+    } else if (strcmp(var_name, "HOMEDRIVE") == 0) {
+        // HOMEDRIVE is typically 'C:' on Windows, but we'll return empty since Linux doesn't use drive letters
+        return "C:";
+    } else if (strcmp(var_name, "HOMEPATH") == 0) {
+        // HOMEPATH is the path portion after the drive, we'll use the home directory
+        char* home = getenv("HOME");
+        if (home) {
+            // Remove the leading part, just get the relative path from home root
+            return home;
+        }
+        return NULL;
+    } else if (strcmp(var_name, "APPDATA") == 0) {
+        // APPDATA maps to XDG_CONFIG_HOME or ~/.config
+        char* xdg_config = getenv("XDG_CONFIG_HOME");
+        if (xdg_config) {
+            return xdg_config;
+        } else {
+            static char config_path[PATH_MAX];
+            char* home = getenv("HOME");
+            if (home) {
+                snprintf(config_path, sizeof(config_path), "%s/.config", home);
+                return config_path;
+            }
+        }
+        return NULL;
+    } else if (strcmp(var_name, "LOCALAPPDATA") == 0) {
+        // LOCALAPPDATA maps to XDG_CACHE_HOME or ~/.cache
+        char* xdg_cache = getenv("XDG_CACHE_HOME");
+        if (xdg_cache) {
+            return xdg_cache;
+        } else {
+            static char cache_path[PATH_MAX];
+            char* home = getenv("HOME");
+            if (home) {
+                snprintf(cache_path, sizeof(cache_path), "%s/.cache", home);
+                return cache_path;
+            }
+        }
+        return NULL;
+    } else if (strcmp(var_name, "TEMP") == 0 || strcmp(var_name, "TMP") == 0) {
+        // TEMP and TMP map to TMPDIR or /tmp
+        char* tmpdir = getenv("TMPDIR");
+        if (tmpdir) {
+            return tmpdir;
+        } else {
+            return "/tmp";  // Default temp directory on Linux
+        }
+    } else if (strcmp(var_name, "ALLUSERSPROFILE") == 0 || strcmp(var_name, "ProgramData") == 0) {
+        // Both ALLUSERSPROFILE and ProgramData map to system-wide data locations
+        return "/etc";  // Closest Linux equivalent for system-wide config/data
+    } else if (strcmp(var_name, "ProgramFiles") == 0) {
+        // ProgramFiles maps to where programs are installed on Linux
+        return "/usr";  // Closest equivalent for system-wide programs
+    } else if (strcmp(var_name, "ProgramFiles(x86)") == 0) {
+        // ProgramFiles(x86) for 32-bit programs on 64-bit systems
+        return "/usr/lib32";  // On multilib systems, 32-bit libraries go here
+    } else if (strcmp(var_name, "CommonProgramFiles") == 0) {
+        // CommonProgramFiles typically maps to lib directories
+        return "/usr/lib";  // Architecture-independent files
+    } else if (strcmp(var_name, "SystemDrive") == 0) {
+        // SystemDrive is the main system drive (e.g. C:)
+        return "/";  // Root directory in Linux
+    } else if (strcmp(var_name, "SystemRoot") == 0 || strcmp(var_name, "windir") == 0) {
+        // SystemRoot and windir map to the Windows system directory
+        // In Linux, this is spread across multiple locations; using /usr as the closest equivalent
+        return "/usr";
+    } else if (strcmp(var_name, "PUBLIC") == 0) {
+        // PUBLIC folder is a shared space
+        return "/home";  // Commonly shared across users
+    }
+    
+    // If no mapping found, return NULL and fallback to regular getenv
+    return NULL;
+}
+
 // Expand environment variables in the format %VARNAME%
 char* expand_environment_variables(char* str) {
     if (str == NULL) {
@@ -1033,16 +1113,15 @@ char* expand_environment_variables(char* str) {
     while (*src != '\0') {
         // Check if we need more space
         if ((size_t)(dst - expanded) >= current_size - 1) { // Leave space for at least one character
+            size_t offset = dst - expanded;  // Store offset before realloc
             current_size *= 2; // Double the buffer size
             char* new_expanded = realloc(expanded, current_size);
             if (new_expanded == NULL) {
                 free(expanded);
                 return NULL;
             }
-            // Update dst pointer to account for potential memory move
-            ptrdiff_t offset = dst - expanded;
             expanded = new_expanded;
-            dst = expanded + offset;
+            dst = expanded + offset;  // Restore dst with new base address
         }
         
         if (*src == '%' && *(src + 1) != '\0' && *(src + 1) != '%') {
@@ -1062,44 +1141,66 @@ char* expand_environment_variables(char* str) {
                     strncpy(var_name, var_start, var_len);
                     var_name[var_len] = '\0';
                     
-                    // Look up the environment variable
-                    char* var_value = getenv(var_name);
+                    // First check for Windows-specific environment variable mappings
+                    char* var_value = map_windows_env_var(var_name);
                     if (var_value != NULL) {
+                        // Use Windows to Linux mapping
                         size_t value_len = strlen(var_value);
                         // Ensure we have enough space for the value
                         while ((size_t)((dst - expanded) + value_len) >= current_size - 1) {
+                            size_t offset = dst - expanded;  // Store offset before realloc
                             current_size *= 2;
                             char* new_expanded = realloc(expanded, current_size);
                             if (new_expanded == NULL) {
                                 free(expanded);
                                 return NULL;
                             }
-                            ptrdiff_t offset = dst - expanded;
                             expanded = new_expanded;
-                            dst = expanded + offset;
+                            dst = expanded + offset;  // Restore dst with new base address
                         }
-                        // Copy the value to the destination
+                        // Copy the mapped value to the destination
                         strcpy(dst, var_value);
                         dst += value_len;
                     } else {
-                        // Variable not found, copy the original %VARNAME% text
-                        size_t needed_len = 2 + var_len; // 2 for the % signs + var name
-                        while ((size_t)((dst - expanded) + needed_len) >= current_size - 1) {
-                            current_size *= 2;
-                            char* new_expanded = realloc(expanded, current_size);
-                            if (new_expanded == NULL) {
-                                free(expanded);
-                                return NULL;
+                        // Not a Windows-specific variable, try regular environment variable
+                        var_value = getenv(var_name);
+                        if (var_value != NULL) {
+                            size_t value_len = strlen(var_value);
+                            // Ensure we have enough space for the value
+                            while ((size_t)((dst - expanded) + value_len) >= current_size - 1) {
+                                size_t offset = dst - expanded;  // Store offset before realloc
+                                current_size *= 2;
+                                char* new_expanded = realloc(expanded, current_size);
+                                if (new_expanded == NULL) {
+                                    free(expanded);
+                                    return NULL;
+                                }
+                                expanded = new_expanded;
+                                dst = expanded + offset;  // Restore dst with new base address
                             }
-                            ptrdiff_t offset = dst - expanded;
-                            expanded = new_expanded;
-                            dst = expanded + offset;
+                            // Copy the value to the destination
+                            strcpy(dst, var_value);
+                            dst += value_len;
+                        } else {
+                            // Variable not found, copy the original %VARNAME% text
+                            size_t needed_len = 2 + var_len; // 2 for the % signs + var name
+                            while ((size_t)((dst - expanded) + needed_len) >= current_size - 1) {
+                                size_t offset = dst - expanded;  // Store offset before realloc
+                                current_size *= 2;
+                                char* new_expanded = realloc(expanded, current_size);
+                                if (new_expanded == NULL) {
+                                    free(expanded);
+                                    return NULL;
+                                }
+                                expanded = new_expanded;
+                                dst = expanded + offset;  // Restore dst with new base address
+                            }
+                            
+                            *dst++ = '%';
+                            strcpy(dst, var_name);
+                            dst += var_len;
+                            *dst++ = '%';
                         }
-                        
-                        *dst++ = '%';
-                        strcpy(dst, var_name);
-                        dst += var_len;
-                        *dst++ = '%';
                     }
                     src++; // Skip the closing %
                 } else {
@@ -1108,15 +1209,15 @@ char* expand_environment_variables(char* str) {
                     while (var_start < src) {
                         // Check for space before copying
                         if ((size_t)(dst - expanded) >= current_size - 1) {
+                            size_t offset = dst - expanded;  // Store offset before realloc
                             current_size *= 2;
                             char* new_expanded = realloc(expanded, current_size);
                             if (new_expanded == NULL) {
                                 free(expanded);
                                 return NULL;
                             }
-                            ptrdiff_t offset = dst - expanded;
                             expanded = new_expanded;
-                            dst = expanded + offset;
+                            dst = expanded + offset;  // Restore dst with new base address
                         }
                         *dst++ = *var_start++;
                     }
