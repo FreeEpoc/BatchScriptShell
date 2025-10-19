@@ -289,13 +289,25 @@ int execute_command(char** args, int arg_count) {
     } else if (strcmp(args[0], "help") == 0) {
         print_help();
         return 1;
-    } else if (strcmp(args[0], "exit") == 0) {
+    } else if (strcasecmp(args[0], "exit") == 0) {
         int exit_code = 0;
+        
         if (arg_count >= 2) {
-            exit_code = atoi(args[1]);
+            // Handle special batch parameters like /b
+            if (strcasecmp(args[1], "/b") == 0) {
+                // exit /b is used in batch files to exit the batch without terminating shell
+                // In our context, this should just return from execute_batch_file 
+                // but since we're inside execute_command, we just return normally
+                if (arg_count >= 3) {
+                    exit_code = atoi(args[2]);  // Use the 3rd argument as exit code if provided
+                }
+            } else {
+                // Regular exit with numeric code
+                exit_code = atoi(args[1]);
+            }
         }
         last_exit_code = exit_code;
-        return 0; // Exit the shell
+        return 0; // Exit the shell/return from command
     } else if (strcasecmp(args[0], "echo.") == 0) {
         printf("\n");
         return 1;
