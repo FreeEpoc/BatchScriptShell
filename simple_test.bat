@@ -1,4 +1,1 @@
-@echo off
-echo Testing simple pause
-pause
-echo After pause
+echo Hello
