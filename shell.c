@@ -28,6 +28,7 @@ char* read_command();
 char** parse_command(char* cmd, int* arg_count);
 int execute_command(char** args, int arg_count);
 void free_args(char** args);
+int handle_redirection(char** args, int arg_count);
 int is_batch_file(const char* filename);
 int execute_batch_file(const char* filename);
 char* expand_path(char* path);
@@ -191,6 +192,13 @@ int execute_command(char** args, int arg_count) {
         return 1; // No command entered, continue shell
     }
 
+    // Check for redirections first, before handling built-in commands
+    // This ensures commands with redirections like 'echo Hello > file.txt' work properly
+    if (handle_redirection(args, arg_count) == 0) {
+        // Redirection was handled successfully
+        return 1;
+    }
+
     // Built-in commands
     if (strcmp(args[0], "echo") == 0) {
         if (arg_count == 1) {
@@ -300,6 +308,118 @@ int execute_command(char** args, int arg_count) {
             printf("Command 'for' not supported in interactive mode\n");
             return 1;
         }
+    } else if (strcasecmp(args[0], "choice") == 0) {
+        // CHOICE command implementation - skip in batch mode to avoid user input
+        if (batch_mode) {
+            // In batch mode, just continue without executing (to avoid hanging)
+            return 1;
+        } else {
+            // In interactive mode, we could implement the full choice functionality
+            // For now, just show what would happen
+            printf("CHOICE command (not fully implemented in this version):\n");
+            for (int i = 1; i < arg_count; i++) {  // Start from 1 to skip "CHOICE"
+                printf("  %s", args[i]);
+                if (i < arg_count - 1) printf(" ");  // Add space between arguments except for the last
+            }
+            printf("\nThis command would pause for user input in interactive mode\n");
+            return 1;
+        }
+    } else if (strcasecmp(args[0], "find") == 0) {
+        // FIND command implementation - basic functionality
+        if (arg_count < 2) {
+            printf("FIND: Insufficient arguments\n");
+            printf("Usage: FIND \"string\" [filename]\n");
+            last_exit_code = 1;
+            return 1;
+        }
+        
+        char* search_string = args[1];
+        char* filename = NULL;
+        
+        if (arg_count >= 3) {
+            filename = args[2];
+        }
+        
+        // If no filename provided, read from stdin in interactive mode
+        if (filename == NULL && !batch_mode) {
+            printf("FIND: Reading from stdin (Ctrl+D to end)\n");
+            char line[MAX_CMD_LENGTH];
+            int line_num = 1;
+            int found_count = 0;
+            
+            while (fgets(line, sizeof(line), stdin) != NULL) {
+                if (strstr(line, search_string) != NULL) {
+                    printf("%s", line);
+                    found_count++;
+                }
+                line_num++;
+            }
+            
+            if (found_count == 0) {
+                last_exit_code = 1; // Not found
+            }
+            return 1;
+        } else if (filename != NULL) {
+            // Search in the specified file
+            FILE* file = fopen(filename, "r");
+            if (file == NULL) {
+                printf("FIND: %s: No such file or directory\n", filename);
+                last_exit_code = 1;
+                return 1;
+            }
+            
+            char line[MAX_CMD_LENGTH];
+            int line_num = 1;
+            int found_count = 0;
+            
+            while (fgets(line, sizeof(line), file) != NULL) {
+                if (strstr(line, search_string) != NULL) {
+                    printf("%s", line);
+                    found_count++;
+                }
+                line_num++;
+            }
+            
+            fclose(file);
+            
+            if (found_count == 0) {
+                last_exit_code = 1; // Not found
+            }
+            return 1;
+        } else {
+            printf("FIND: No filename provided in batch mode\n");
+            last_exit_code = 1;
+            return 1;
+        }
+    } else if (strcasecmp(args[0], "del") == 0 || strcasecmp(args[0], "erase") == 0) {
+        // DEL/ERASE command implementation
+        if (arg_count < 2) {
+            printf("DEL: Insufficient arguments\n");
+            printf("Usage: DEL filename\n");
+            last_exit_code = 1;
+            return 1;
+        }
+        
+        if (batch_mode) {
+            // In batch mode, just try to delete the file
+            if (remove(args[1]) != 0) {
+                printf("DEL: Cannot delete %s: %s\n", args[1], strerror(errno));
+                last_exit_code = 1;
+            }
+        } else {
+            // In interactive mode, maybe ask for confirmation
+            char response[10];
+            printf("Delete %s? (Y/N): ", args[1]);
+            fflush(stdout);
+            if (fgets(response, sizeof(response), stdin) && 
+                (response[0] == 'Y' || response[0] == 'y')) {
+                if (remove(args[1]) != 0) {
+                    printf("DEL: Cannot delete %s: %s\n", args[1], strerror(errno));
+                    last_exit_code = 1;
+                }
+            }
+        }
+        return 1;
     }
 
     // For other commands, try to execute them as external programs
@@ -334,6 +454,105 @@ void free_args(char** args) {
         free(args[i]);
     }
     free(args);
+}
+
+int handle_redirection(char** args, int arg_count) {
+    // Look for redirection operators in the arguments
+    for (int i = 0; i < arg_count; i++) {
+        if (strcmp(args[i], ">") == 0 || strcmp(args[i], ">>") == 0 || strcmp(args[i], "<") == 0) {
+            // Found a redirection operator
+            if (i + 1 >= arg_count) {
+                // No file specified after redirection operator
+                printf("Syntax error: No file specified after redirection operator\n");
+                last_exit_code = 1;
+                return -1; // Indicate error
+            }
+            
+            char* cmd = args[0]; // Command is first argument
+            char* file = args[i + 1]; // File is after redirection operator
+            
+            // We need to handle the redirection by executing the command with proper file handling
+            if (strcmp(args[i], "<") == 0) {
+                // Input redirection - not implemented in this simple version
+                printf("Input redirection not fully implemented\n");
+                return -1;
+            }
+            
+            // Create new argument list without redirection part
+            char** new_args = malloc((i + 1) * sizeof(char*));
+            if (new_args == NULL) {
+                perror("malloc");
+                return -1;
+            }
+            
+            // Copy command and arguments before redirection
+            for (int j = 0; j < i; j++) {
+                new_args[j] = strdup(args[j]);
+                if (new_args[j] == NULL) {
+                    perror("strdup");
+                    for (int k = 0; k < j; k++) {
+                        free(new_args[k]);
+                    }
+                    free(new_args);
+                    return -1;
+                }
+            }
+            new_args[i] = NULL;
+            
+            // Special handling for echo command with redirection
+            if (strcmp(cmd, "echo") == 0 && strcmp(args[i], ">") == 0) {
+                FILE* f = fopen(file, "w");
+                if (f == NULL) {
+                    perror("fopen");
+                    free_args(new_args);
+                    last_exit_code = 1;
+                    return -1;
+                }
+                
+                // Write the echo content to the file
+                for (int j = 1; j < i; j++) { // Start from 1 to skip "echo"
+                    fputs(new_args[j], f);
+                    if (j < i - 1) { // Add space between arguments
+                        fputc(' ', f);
+                    }
+                }
+                fputc('\n', f); // Add newline at the end
+                fclose(f);
+                
+                free_args(new_args);
+                return 0; // Success
+            } else if (strcmp(cmd, "echo") == 0 && strcmp(args[i], ">>") == 0) {
+                FILE* f = fopen(file, "a");
+                if (f == NULL) {
+                    perror("fopen");
+                    free_args(new_args);
+                    last_exit_code = 1;
+                    return -1;
+                }
+                
+                // Append the echo content to the file
+                for (int j = 1; j < i; j++) { // Start from 1 to skip "echo"
+                    fputs(new_args[j], f);
+                    if (j < i - 1) { // Add space between arguments
+                        fputc(' ', f);
+                    }
+                }
+                fputc('\n', f); // Add newline at the end
+                fclose(f);
+                
+                free_args(new_args);
+                return 0; // Success
+            } else {
+                // For other commands, we would need to use pipes and redirection
+                // which is more complex. For this implementation, we'll handle only echo.
+                free_args(new_args);
+                return -1; // Not a supported redirection case - continue with normal execution
+            }
+        }
+    }
+    
+    // No redirection operators found
+    return -1; // Indicate no redirection to handle
 }
 
 int is_batch_file(const char* filename) {

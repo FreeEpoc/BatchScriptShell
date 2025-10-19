@@ -1,4 +1,4 @@
 @echo off
-echo Simple test
-pwd
-dir
+echo Testing simple pause
+pause
+echo After pause

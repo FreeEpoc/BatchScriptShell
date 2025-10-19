@@ -1,53 +1,64 @@
-# BSS (Batch Script Shell) Test Scripts
+# Test Runner Script for Batch Script Shell (BSS)
 
-This directory contains test batch scripts that demonstrate the DOS-like features of the Batch Script Shell (BSS).
+## Overview
 
-## Test Scripts
+The `run_all_tests.sh` script provides a comprehensive way to run all batch script tests in the `tests` directory with configurable error handling behavior.
 
-### `dos_features_test.bat`
-Tests all major DOS-like features implemented:
-- FOR loops
-- File commands: MD, RD, COPY, DEL
-- Date and time commands
-- DIR and TYPE commands
-- FIND command
-- SORT command
-- Pipe functionality
-- IF statements
-- SET command with arithmetic
-- Environment variables
+## Features
 
-### `pipe_test.bat`
-Tests pipe functionality and related commands:
-- TYPE | FIND
-- TYPE | SORT
-- TYPE | FIND /C
-- Redirection combined with pipes
-- FOR /F loops with file input
+- Runs all `.bat` files found in the `tests` directory
+- Configurable error handling:
+  - Stop on first failure (default)
+  - Continue running all tests even after failures
+- Command-line options for controlling execution
+- Verbose output option for detailed test results
+- Summary report with pass/fail counts
 
-### `file_commands_test.bat`
-Tests file system manipulation commands:
-- MD (mkdir) and RD (rmdir)
-- COPY and MOVE commands
-- TYPE and DIR commands
-- FIND command
-- DEL command with multiple files
+## Usage
 
-### `interactive_commands_test.bat`
-Tests advanced features including:
-- DATE and TIME commands
-- Complex FOR loops
-- SET command with arithmetic and assignment operators
-- IF statements with comparisons and logical operators
-- Environment variables and string operations
-
-## How to Run Tests
-
-Run any test script with BSS using:
 ```bash
-./bss tests/dos_features_test.bat
+./run_all_tests.sh [OPTIONS]
 ```
 
-## Expected Results
+### Options
 
-Each test script will verify that the implemented DOS-like functionality works as expected, with the shell behaving similarly to Windows command prompt for these features.
+- `-h, --help`: Show help message
+- `-c, --continue`: Continue running tests even after a failure
+- `-v, --verbose`: Print detailed output for each test
+- `-s, --stop-on-error`: Stop on first error (default behavior)
+
+## Exit Codes
+
+- `0`: All tests passed
+- `1`: At least one test failed
+- Other values: Specific test failure codes
+
+## Implementation Notes
+
+The script executes the BSS shell for each test file and checks the exit code. If a test's exit code is non-zero, it's considered a failure.
+
+Note: The current implementation of the Batch Script Shell (BSS) may not propagate exit codes from commands within batch files correctly. For a test to register as failed, the shell process itself must return a non-zero exit code. Some improvements to the shell's error handling may be necessary to fully utilize this feature.
+
+To make a test fail explicitly, use the `exit /b <code>` command in your batch script where `<code>` is a non-zero value.
+
+## Examples
+
+Run all tests, stopping at the first failure:
+```bash
+./run_all_tests.sh
+```
+
+Run all tests, continuing even after failures:
+```bash
+./run_all_tests.sh --continue
+```
+
+Run all tests with verbose output:
+```bash
+./run_all_tests.sh --verbose
+```
+
+Run all tests with both continue and verbose options:
+```bash
+./run_all_tests.sh --continue --verbose
+```

@@ -29,6 +29,33 @@ To clean build artifacts:
 make clean
 ```
 
+### Using the Build Script
+
+We've provided a convenient build script that wraps all build options:
+
+```bash
+# Build with default make
+./build.sh build
+
+# Build with CMake
+./build.sh cmake
+
+# Build with Autotools
+./build.sh autotools
+
+# Clean build artifacts
+./build.sh clean
+
+# Clean all including autotools generated files
+./build.sh distclean
+
+# Install the executable
+./build.sh install
+
+# Show help
+./build.sh help
+```
+
 ### Using CMake
 
 ```bash
