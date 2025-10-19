@@ -10,6 +10,7 @@
 #include <errno.h>
 #include <ctype.h>
 #include <strings.h>
+#include <stddef.h>
 
 #ifndef PATH_MAX
 #define PATH_MAX 4096
@@ -34,6 +35,7 @@ int execute_batch_file(const char* filename);
 char* expand_path(char* path);
 char* convert_win_to_unix_path(const char* win_path);
 int starts_with(const char* str, const char* prefix);
+char* expand_environment_variables(char* str);
 void print_help();
 
 int main(int argc, char* argv[]) {
@@ -156,17 +158,101 @@ char** parse_command(char* cmd, int* arg_count) {
         return NULL;
     }
 
-    char* token;
     int count = 0;
+    char* ptr = cmd;
 
     // Handle @echo off and similar commands at start
     if (cmd[0] == '@') {
         memmove(cmd, cmd + 1, strlen(cmd)); // Remove the '@'
+        ptr = cmd;
     }
 
-    token = strtok(cmd, " \t\r\n");
-    while (token != NULL && count < MAX_ARGS - 1) {
-        args[count] = strdup(token);
+    // Skip leading whitespace
+    while (isspace((unsigned char)*ptr)) {
+        ptr++;
+    }
+
+    while (*ptr != '\0' && count < MAX_ARGS - 1) {
+        // Skip whitespace
+        while (isspace((unsigned char)*ptr)) {
+            ptr++;
+        }
+
+        if (*ptr == '\0') {
+            break;
+        }
+
+        // Check for redirection operators
+        if (*ptr == '>' || (*ptr == '>' && *(ptr + 1) == '>') || *ptr == '<') {
+            // Handle redirection operators as separate tokens
+            if (*ptr == '>' && *(ptr + 1) == '>') {
+                // Handle >>
+                args[count] = strdup(">>");
+                ptr += 2;
+            } else if (*ptr == '>') {
+                // Handle >
+                args[count] = strdup(">");
+                ptr += 1;
+            } else if (*ptr == '<') {
+                // Handle <
+                args[count] = strdup("<");
+                ptr += 1;
+            }
+        } else {
+            // Handle regular arguments (including quoted strings)
+            char* start = ptr;
+
+            if (*ptr == '"') {
+                // Handle quoted string
+                start = ptr + 1; // Skip opening quote
+                ptr++;
+                while (*ptr != '\0' && *ptr != '"') {
+                    ptr++;
+                }
+                if (*ptr == '"') {
+                    *ptr = '\0'; // Terminate the quoted string
+                    ptr++;
+                }
+                // Expand environment variables in the quoted argument
+                char* expanded = expand_environment_variables(start);
+                args[count] = expanded ? expanded : strdup(start);
+            } else {
+                // Handle unquoted string
+                while (*ptr != '\0' && !isspace((unsigned char)*ptr) && 
+                       *ptr != '>' && *ptr != '<') {
+                    ptr++;
+                }
+                
+                // Check if we're at a redirection operator
+                if (*ptr == '>' || *ptr == '<') {
+                    // Break here to allow the redirection operator to be parsed separately
+                    char temp = *ptr;
+                    *ptr = '\0';
+                    // Expand environment variables in the argument
+                    char* expanded = expand_environment_variables(start);
+                    args[count] = expanded ? expanded : strdup(start);
+                    *ptr = temp; // Restore the character
+                    if (args[count] == NULL) {
+                        perror("strdup");
+                        for (int i = 0; i < count; i++) {
+                            free(args[i]);
+                        }
+                        free(args);
+                        return NULL;
+                    }
+                    count++;
+                    continue; // Continue to parse the redirection operator
+                } else {
+                    char temp = *ptr;
+                    *ptr = '\0';
+                    // Expand environment variables in the argument
+                    char* expanded = expand_environment_variables(start);
+                    args[count] = expanded ? expanded : strdup(start);
+                    *ptr = temp; // Restore the character
+                }
+            }
+        }
+
         if (args[count] == NULL) {
             perror("strdup");
             for (int i = 0; i < count; i++) {
@@ -176,7 +262,6 @@ char** parse_command(char* cmd, int* arg_count) {
             return NULL;
         }
         count++;
-        token = strtok(NULL, " \t\r\n");
     }
 
     args[count] = NULL;
@@ -924,6 +1009,140 @@ char* convert_win_to_unix_path(const char* win_path) {
 
 int starts_with(const char* str, const char* prefix) {
     return strncmp(str, prefix, strlen(prefix)) == 0;
+}
+
+// Expand environment variables in the format %VARNAME%
+char* expand_environment_variables(char* str) {
+    if (str == NULL) {
+        return NULL;
+    }
+    
+    size_t original_len = strlen(str);
+    // Allocate initial memory for the expanded string
+    size_t buf_size = original_len + 1; // Start with original size + null terminator
+    char* expanded = malloc(buf_size);
+    if (expanded == NULL) {
+        return NULL;
+    }
+    
+    char* src = str;
+    char* dst = expanded;
+    char var_name[256];
+    size_t current_size = buf_size;
+    
+    while (*src != '\0') {
+        // Check if we need more space
+        if ((size_t)(dst - expanded) >= current_size - 1) { // Leave space for at least one character
+            current_size *= 2; // Double the buffer size
+            char* new_expanded = realloc(expanded, current_size);
+            if (new_expanded == NULL) {
+                free(expanded);
+                return NULL;
+            }
+            // Update dst pointer to account for potential memory move
+            ptrdiff_t offset = dst - expanded;
+            expanded = new_expanded;
+            dst = expanded + offset;
+        }
+        
+        if (*src == '%' && *(src + 1) != '\0' && *(src + 1) != '%') {
+            // Found a potential environment variable
+            src++; // Skip the first %
+            char* var_start = src;
+            
+            // Find the closing %
+            while (*src != '\0' && *src != '%') {
+                src++;
+            }
+            
+            if (*src == '%') {
+                // Found closing %, extract variable name
+                size_t var_len = src - var_start;
+                if (var_len < sizeof(var_name) - 1) {
+                    strncpy(var_name, var_start, var_len);
+                    var_name[var_len] = '\0';
+                    
+                    // Look up the environment variable
+                    char* var_value = getenv(var_name);
+                    if (var_value != NULL) {
+                        size_t value_len = strlen(var_value);
+                        // Ensure we have enough space for the value
+                        while ((size_t)((dst - expanded) + value_len) >= current_size - 1) {
+                            current_size *= 2;
+                            char* new_expanded = realloc(expanded, current_size);
+                            if (new_expanded == NULL) {
+                                free(expanded);
+                                return NULL;
+                            }
+                            ptrdiff_t offset = dst - expanded;
+                            expanded = new_expanded;
+                            dst = expanded + offset;
+                        }
+                        // Copy the value to the destination
+                        strcpy(dst, var_value);
+                        dst += value_len;
+                    } else {
+                        // Variable not found, copy the original %VARNAME% text
+                        size_t needed_len = 2 + var_len; // 2 for the % signs + var name
+                        while ((size_t)((dst - expanded) + needed_len) >= current_size - 1) {
+                            current_size *= 2;
+                            char* new_expanded = realloc(expanded, current_size);
+                            if (new_expanded == NULL) {
+                                free(expanded);
+                                return NULL;
+                            }
+                            ptrdiff_t offset = dst - expanded;
+                            expanded = new_expanded;
+                            dst = expanded + offset;
+                        }
+                        
+                        *dst++ = '%';
+                        strcpy(dst, var_name);
+                        dst += var_len;
+                        *dst++ = '%';
+                    }
+                    src++; // Skip the closing %
+                } else {
+                    // Variable name too long, copy as-is
+                    *dst++ = '%';
+                    while (var_start < src) {
+                        // Check for space before copying
+                        if ((size_t)(dst - expanded) >= current_size - 1) {
+                            current_size *= 2;
+                            char* new_expanded = realloc(expanded, current_size);
+                            if (new_expanded == NULL) {
+                                free(expanded);
+                                return NULL;
+                            }
+                            ptrdiff_t offset = dst - expanded;
+                            expanded = new_expanded;
+                            dst = expanded + offset;
+                        }
+                        *dst++ = *var_start++;
+                    }
+                    *dst++ = '%';
+                    src++; // Skip the closing %
+                }
+            } else {
+                // No closing %, copy the opening % and continue
+                *dst++ = '%';
+            }
+        } else if (*src == '%' && *(src + 1) == '%') {
+            // Handle escaped %% as a literal %
+            *dst++ = '%';
+            src += 2;
+        } else {
+            // Regular character, copy as-is
+            *dst++ = *src++;
+        }
+    }
+    
+    *dst = '\0'; // Null terminate the expanded string
+    
+    // Reallocate to fit the actual size plus a small buffer to avoid issues with realloc
+    size_t final_size = strlen(expanded) + 1;
+    char* result = realloc(expanded, final_size);
+    return result ? result : expanded;
 }
 
 void print_help() {
