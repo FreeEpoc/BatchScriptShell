@@ -497,6 +497,29 @@ int execute_command(char** args, int arg_count) {
             }
         }
         return 1;
+    } else if (strcasecmp(args[0], "type") == 0) {
+        // TYPE command implementation (similar to cat in Linux)
+        if (arg_count < 2) {
+            printf("TYPE: Insufficient arguments\n");
+            printf("Usage: TYPE filename\n");
+            last_exit_code = 1;
+            return 1;
+        }
+        
+        FILE* file = fopen(args[1], "r");
+        if (file == NULL) {
+            printf("TYPE: %s: No such file or directory\n", args[1]);
+            last_exit_code = 1;
+            return 1;
+        }
+        
+        char line[MAX_CMD_LENGTH];
+        while (fgets(line, sizeof(line), file) != NULL) {
+            printf("%s", line);
+        }
+        
+        fclose(file);
+        return 1;
     }
 
     // For other commands, try to execute them as external programs
@@ -781,6 +804,7 @@ void print_help() {
     printf("  pause           - Pause and wait for keypress\n");
     printf("  help            - Show this help message\n");
     printf("  exit            - Exit the shell\n");
+    printf("  type [filename] - Display the contents of a file\n");
     printf("\n");
     printf("Additional features:\n");
     printf("  - Execute batch files (.bat, .cmd)\n");
