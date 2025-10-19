@@ -339,13 +339,19 @@ int execute_command(char** args, int arg_count) {
         int start_arg = 1;
         int end_arg = arg_count - 1;  // assume last arg is filename unless it doesn't look like one
         
+        // Check if last argument might be a Windows-style error redirection (e.g. "2>nul") and exclude it
+        if (arg_count >= 2 && strlen(args[arg_count-1]) > 2 && args[arg_count-1][0] == '2' && args[arg_count-1][1] == '>') {
+            // This is a redirection pattern like "2>nul", so ignore it and treat the previous arg as filename if appropriate
+            arg_count--;  // Effectively remove the last argument
+        }
+        
         // Check if last argument might be a filename by looking for file extensions or path indicators
         int has_filename = (arg_count >= 3) && 
                           (strchr(args[arg_count-1], '.') || 
                            strchr(args[arg_count-1], '/') || 
                            strchr(args[arg_count-1], '\\') ||
-                           strcmp(args[1], "/V") != 0 ||  // If first arg after 'find' is an option, last is likely filename
-                           strcmp(args[1], "/C") != 0);
+                           // Additional patterns that suggest it's a filename
+                           args[arg_count-1][0] == '/' || args[arg_count-1][0] == '\\');
         
         if (has_filename) {
             end_arg = arg_count - 2;  // Exclude the filename
@@ -516,96 +522,100 @@ void free_args(char** args) {
 }
 
 int handle_redirection(char** args, int arg_count) {
-    // Look for redirection operators in the arguments
     for (int i = 0; i < arg_count; i++) {
-        if (strcmp(args[i], ">") == 0 || strcmp(args[i], ">>") == 0 || strcmp(args[i], "<") == 0) {
+        // Check for standard redirection operators
+        int is_standard_redir = (strcmp(args[i], ">") == 0 || strcmp(args[i], ">>") == 0 || strcmp(args[i], "<") == 0);
+        
+        // Check for Windows-style error redirection (e.g., "2>nul", "2>error.txt")
+        int is_error_redir = 0;
+        char* error_redir_file = NULL;
+        if (strlen(args[i]) > 2 && args[i][0] == '2' && args[i][1] == '>') {
+            is_error_redir = 1;
+            error_redir_file = args[i] + 2;  // Point to the filename part
+        }
+        
+        if (is_standard_redir || is_error_redir) {
             // Found a redirection operator
-            if (i + 1 >= arg_count) {
-                // No file specified after redirection operator
-                printf("Syntax error: No file specified after redirection operator\n");
-                last_exit_code = 1;
-                return -1; // Indicate error
+            if (is_standard_redir && i + 1 >= arg_count && strcmp(args[i], "<") != 0) {
+                // For > and >>, we need a file; for <, the next argument could be optional in some contexts
+                if (strcmp(args[i], "<") != 0) {
+                    printf("Syntax error: No file specified after redirection operator\n");
+                    last_exit_code = 1;
+                    return -1; // Indicate error
+                }
             }
             
             char* cmd = args[0]; // Command is first argument
-            char* file = args[i + 1]; // File is after redirection operator
-            
-            // We need to handle the redirection by executing the command with proper file handling
-            if (strcmp(args[i], "<") == 0) {
-                // Input redirection - not implemented in this simple version
-                printf("Input redirection not fully implemented\n");
-                return -1;
-            }
+            char* file = is_standard_redir ? args[i + 1] : error_redir_file;  // Get file based on redirection type
             
             // Create new argument list without redirection part
-            char** new_args = malloc((i + 1) * sizeof(char*));
+            char** new_args = malloc((arg_count) * sizeof(char*));  // Allocate for all possible args
             if (new_args == NULL) {
                 perror("malloc");
                 return -1;
             }
             
-            // Copy command and arguments before redirection
-            for (int j = 0; j < i; j++) {
-                new_args[j] = strdup(args[j]);
-                if (new_args[j] == NULL) {
+            // Copy arguments, skipping the redirection part
+            int new_idx = 0;
+            for (int j = 0; j < arg_count; j++) {
+                if (j == i) {
+                    // Skip this redirection argument
+                    if (is_standard_redir) {
+                        // For standard redirection like ">", skip the next argument (filename) too
+                        j++;  // Skip the file argument after the operator
+                    }
+                    continue;  // Skip the redirection operator itself
+                }
+                new_args[new_idx] = strdup(args[j]);
+                if (new_args[new_idx] == NULL) {
                     perror("strdup");
-                    for (int k = 0; k < j; k++) {
+                    for (int k = 0; k < new_idx; k++) {
                         free(new_args[k]);
                     }
                     free(new_args);
                     return -1;
                 }
+                new_idx++;
             }
-            new_args[i] = NULL;
+            new_args[new_idx] = NULL; // Set the last element to NULL
             
             // Special handling for echo command with redirection
-            if (strcmp(cmd, "echo") == 0 && strcmp(args[i], ">") == 0) {
-                FILE* f = fopen(file, "w");
-                if (f == NULL) {
-                    perror("fopen");
-                    free_args(new_args);
-                    last_exit_code = 1;
-                    return -1;
-                }
-                
-                // Write the echo content to the file
-                for (int j = 1; j < i; j++) { // Start from 1 to skip "echo"
-                    fputs(new_args[j], f);
-                    if (j < i - 1) { // Add space between arguments
-                        fputc(' ', f);
+            if (strcmp(cmd, "echo") == 0 && (is_standard_redir || is_error_redir)) {
+                if (is_standard_redir) {
+                    FILE* f = fopen(file, strcmp(args[i], ">>") == 0 ? "a" : "w");
+                    if (f == NULL) {
+                        perror("fopen");
+                        free_args(new_args);
+                        last_exit_code = 1;
+                        return -1;
                     }
-                }
-                fputc('\n', f); // Add newline at the end
-                fclose(f);
-                
-                free_args(new_args);
-                return 0; // Success
-            } else if (strcmp(cmd, "echo") == 0 && strcmp(args[i], ">>") == 0) {
-                FILE* f = fopen(file, "a");
-                if (f == NULL) {
-                    perror("fopen");
-                    free_args(new_args);
-                    last_exit_code = 1;
-                    return -1;
-                }
-                
-                // Append the echo content to the file
-                for (int j = 1; j < i; j++) { // Start from 1 to skip "echo"
-                    fputs(new_args[j], f);
-                    if (j < i - 1) { // Add space between arguments
-                        fputc(' ', f);
+                    
+                    // Write the echo content to the file
+                    for (int j = 1; j < new_idx; j++) { // Start from 1 to skip "echo", go to new_idx
+                        fputs(new_args[j], f);
+                        if (j < new_idx - 1) { // Add space between arguments
+                            fputc(' ', f);
+                        }
                     }
+                    fputc('\n', f); // Add newline at the end
+                    fclose(f);
+                    
+                    free_args(new_args);
+                    return 0; // Success
+                } else if (is_error_redir) {
+                    // For error redirection, just continue after removing the redirection arg from args
+                    // This is a simplified approach - a full implementation would redirect stderr
+                    free_args(new_args);
+                    return -1; // Not fully handled, let the normal execution continue
                 }
-                fputc('\n', f); // Add newline at the end
-                fclose(f);
-                
-                free_args(new_args);
-                return 0; // Success
             } else {
-                // For other commands, we would need to use pipes and redirection
-                // which is more complex. For this implementation, we'll handle only echo.
+                // For other commands, just return -1 to continue with normal execution after filtering args
+                // But we need to update the original args list, which is not possible here
+                // A better approach would be to return the modified arguments and have them used
+                // However, since we can't change the execute_command signature easily,
+                // we'll execute the command directly here for supported redirections
                 free_args(new_args);
-                return -1; // Not a supported redirection case - continue with normal execution
+                return -1; // For other commands, return -1 to continue with original args handling
             }
         }
     }
