@@ -333,11 +333,49 @@ int execute_command(char** args, int arg_count) {
             return 1;
         }
         
-        char* search_string = args[1];
-        char* filename = NULL;
+        // Handle the case where quoted strings were split by strtok
+        // e.g. "find \"search term\" file.txt" becomes ["find", "\"search", "term\"", "file.txt"]
+        char search_string[MAX_CMD_LENGTH];
+        int start_arg = 1;
+        int end_arg = arg_count - 1;  // assume last arg is filename unless it doesn't look like one
         
-        if (arg_count >= 3) {
-            filename = args[2];
+        // Check if last argument might be a filename by looking for file extensions or path indicators
+        int has_filename = (arg_count >= 3) && 
+                          (strchr(args[arg_count-1], '.') || 
+                           strchr(args[arg_count-1], '/') || 
+                           strchr(args[arg_count-1], '\\') ||
+                           strcmp(args[1], "/V") != 0 ||  // If first arg after 'find' is an option, last is likely filename
+                           strcmp(args[1], "/C") != 0);
+        
+        if (has_filename) {
+            end_arg = arg_count - 2;  // Exclude the filename
+        } else {
+            has_filename = 0;  // No filename found
+        }
+        
+        char* filename = has_filename ? args[arg_count - 1] : NULL;
+        
+        // Reconstruct the search string from multiple arguments, handling quoted fragments
+        strcpy(search_string, "");
+        for (int i = start_arg; i <= end_arg; i++) {
+            if (i > start_arg) strcat(search_string, " ");
+            
+            const char* arg = args[i];
+            
+            // Remove leading quote if present
+            if (arg[0] == '"') {
+                arg++;
+            }
+            
+            // Remove trailing quote if present
+            size_t arg_len = strlen(arg);
+            char* temp_arg = strdup(arg);
+            if (temp_arg && arg_len > 0 && temp_arg[arg_len-1] == '"') {
+                temp_arg[arg_len-1] = '\0';
+            }
+            
+            strcat(search_string, temp_arg ? temp_arg : arg);
+            free(temp_arg);
         }
         
         // If no filename provided, read from stdin in interactive mode
@@ -387,9 +425,30 @@ int execute_command(char** args, int arg_count) {
             }
             return 1;
         } else {
-            printf("FIND: No filename provided in batch mode\n");
-            last_exit_code = 1;
-            return 1;
+            // Search without a file - this would be in stdin in interactive mode
+            if (batch_mode) {
+                printf("FIND: No filename provided in batch mode\n");
+                last_exit_code = 1;
+                return 1;
+            } else {
+                printf("FIND: Reading from stdin (Ctrl+D to end)\n");
+                char line[MAX_CMD_LENGTH];
+                int line_num = 1;
+                int found_count = 0;
+                
+                while (fgets(line, sizeof(line), stdin) != NULL) {
+                    if (strstr(line, search_string) != NULL) {
+                        printf("%s", line);
+                        found_count++;
+                    }
+                    line_num++;
+                }
+                
+                if (found_count == 0) {
+                    last_exit_code = 1; // Not found
+                }
+                return 1;
+            }
         }
     } else if (strcasecmp(args[0], "del") == 0 || strcasecmp(args[0], "erase") == 0) {
         // DEL/ERASE command implementation
