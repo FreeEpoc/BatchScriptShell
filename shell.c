@@ -300,13 +300,21 @@ int execute_command(char** args, int arg_count) {
                 // but since we're inside execute_command, we just return normally
                 if (arg_count >= 3) {
                     exit_code = atoi(args[2]);  // Use the 3rd argument as exit code if provided
+                    last_exit_code = exit_code;
+                } else {
+                    // With exit /b and no explicit code, preserve the current error level
+                    // This is the Windows batch default behavior
+                    exit_code = last_exit_code;
                 }
             } else {
                 // Regular exit with numeric code
                 exit_code = atoi(args[1]);
+                last_exit_code = exit_code;
             }
+        } else {
+            // Just 'exit' without arguments - exit with code 0
+            last_exit_code = exit_code;
         }
-        last_exit_code = exit_code;
         return 0; // Exit the shell/return from command
     } else if (strcasecmp(args[0], "echo.") == 0) {
         printf("\n");
@@ -337,10 +345,44 @@ int execute_command(char** args, int arg_count) {
             return 1;
         }
     } else if (strcasecmp(args[0], "find") == 0) {
-        // FIND command implementation - basic functionality
+        // FIND command implementation - basic functionality with flag support
         if (arg_count < 2) {
             printf("FIND: Insufficient arguments\n");
-            printf("Usage: FIND \"string\" [filename]\n");
+            printf("Usage: FIND [/V] [/C] [/I] \"string\" [filename]\n");
+            last_exit_code = 1;
+            return 1;
+        }
+        
+        // Parse flags
+        int invert_match = 0;  // /V flag - select non-matching lines
+        int count_only = 0;    // /C flag - count matching lines
+        int ignore_case = 0;   // /I flag - ignore case
+        
+        int start_arg = 1;
+        // Process any flags at the beginning of the arguments
+        for (int i = 1; i < arg_count; i++) {
+            if (strlen(args[i]) >= 2 && args[i][0] == '/') {
+                if (strcasecmp(args[i] + 1, "V") == 0) {
+                    invert_match = 1;
+                    start_arg++;
+                } else if (strcasecmp(args[i] + 1, "C") == 0) {
+                    count_only = 1;
+                    start_arg++;
+                } else if (strcasecmp(args[i] + 1, "I") == 0) {
+                    ignore_case = 1;
+                    start_arg++;
+                } else {
+                    // Not a recognized flag, so stop flag processing
+                    break;
+                }
+            } else {
+                // This is not a flag, so stop processing flags
+                break;
+            }
+        }
+        
+        if (start_arg >= arg_count) {
+            printf("FIND: No search string provided\n");
             last_exit_code = 1;
             return 1;
         }
@@ -348,7 +390,6 @@ int execute_command(char** args, int arg_count) {
         // Handle the case where quoted strings were split by strtok
         // e.g. "find \"search term\" file.txt" becomes ["find", "\"search", "term\"", "file.txt"]
         char search_string[MAX_CMD_LENGTH];
-        int start_arg = 1;
         int end_arg = arg_count - 1;  // assume last arg is filename unless it doesn't look like one
         
         // Check if last argument might be a Windows-style error redirection (e.g. "2>nul") and exclude it
@@ -358,20 +399,17 @@ int execute_command(char** args, int arg_count) {
         }
         
         // Check if last argument might be a filename by looking for file extensions or path indicators
-        int has_filename = (arg_count >= 3) && 
+        int has_filename = (start_arg < arg_count - 1) &&  // Make sure we still have potential filename arg
                           (strchr(args[arg_count-1], '.') || 
                            strchr(args[arg_count-1], '/') || 
                            strchr(args[arg_count-1], '\\') ||
                            // Additional patterns that suggest it's a filename
                            args[arg_count-1][0] == '/' || args[arg_count-1][0] == '\\');
         
+        char* filename = has_filename ? args[arg_count - 1] : NULL;
         if (has_filename) {
             end_arg = arg_count - 2;  // Exclude the filename
-        } else {
-            has_filename = 0;  // No filename found
         }
-        
-        char* filename = has_filename ? args[arg_count - 1] : NULL;
         
         // Reconstruct the search string from multiple arguments, handling quoted fragments
         strcpy(search_string, "");
@@ -404,11 +442,43 @@ int execute_command(char** args, int arg_count) {
             int found_count = 0;
             
             while (fgets(line, sizeof(line), stdin) != NULL) {
-                if (strstr(line, search_string) != NULL) {
-                    printf("%s", line);
+                int match;
+                if (ignore_case) {
+                    // Manual case-insensitive search
+                    char* lower_line = strdup(line);
+                    char* lower_search = strdup(search_string);
+                    if (lower_line && lower_search) {
+                        for (int j = 0; lower_line[j]; j++) {
+                            lower_line[j] = tolower(lower_line[j]);
+                        }
+                        for (int j = 0; lower_search[j]; j++) {
+                            lower_search[j] = tolower(lower_search[j]);
+                        }
+                        match = (strstr(lower_line, lower_search) != NULL);
+                        free(lower_line);
+                        free(lower_search);
+                    } else {
+                        match = (strstr(line, search_string) != NULL); // fallback to case-sensitive
+                    }
+                } else {
+                    match = (strstr(line, search_string) != NULL);
+                }
+                
+                if (invert_match) {
+                    match = !match;  // Invert the match for /V flag
+                }
+                
+                if (match) {
                     found_count++;
+                    if (!count_only) {
+                        printf("%s", line);
+                    }
                 }
                 line_num++;
+            }
+            
+            if (count_only) {
+                printf("%d\n", found_count);
             }
             
             if (found_count == 0) {
@@ -429,14 +499,46 @@ int execute_command(char** args, int arg_count) {
             int found_count = 0;
             
             while (fgets(line, sizeof(line), file) != NULL) {
-                if (strstr(line, search_string) != NULL) {
-                    printf("%s", line);
+                int match;
+                if (ignore_case) {
+                    // Manual case-insensitive search
+                    char* lower_line = strdup(line);
+                    char* lower_search = strdup(search_string);
+                    if (lower_line && lower_search) {
+                        for (int j = 0; lower_line[j]; j++) {
+                            lower_line[j] = tolower(lower_line[j]);
+                        }
+                        for (int j = 0; lower_search[j]; j++) {
+                            lower_search[j] = tolower(lower_search[j]);
+                        }
+                        match = (strstr(lower_line, lower_search) != NULL);
+                        free(lower_line);
+                        free(lower_search);
+                    } else {
+                        match = (strstr(line, search_string) != NULL); // fallback to case-sensitive
+                    }
+                } else {
+                    match = (strstr(line, search_string) != NULL);
+                }
+                
+                if (invert_match) {
+                    match = !match;  // Invert the match for /V flag
+                }
+                
+                if (match) {
                     found_count++;
+                    if (!count_only) {
+                        printf("%s", line);
+                    }
                 }
                 line_num++;
             }
             
             fclose(file);
+            
+            if (count_only) {
+                printf("%d\n", found_count);
+            }
             
             if (found_count == 0) {
                 last_exit_code = 1; // Not found
@@ -455,11 +557,43 @@ int execute_command(char** args, int arg_count) {
                 int found_count = 0;
                 
                 while (fgets(line, sizeof(line), stdin) != NULL) {
-                    if (strstr(line, search_string) != NULL) {
-                        printf("%s", line);
+                    int match;
+                    if (ignore_case) {
+                        // Manual case-insensitive search
+                        char* lower_line = strdup(line);
+                        char* lower_search = strdup(search_string);
+                        if (lower_line && lower_search) {
+                            for (int j = 0; lower_line[j]; j++) {
+                                lower_line[j] = tolower(lower_line[j]);
+                            }
+                            for (int j = 0; lower_search[j]; j++) {
+                                lower_search[j] = tolower(lower_search[j]);
+                            }
+                            match = (strstr(lower_line, lower_search) != NULL);
+                            free(lower_line);
+                            free(lower_search);
+                        } else {
+                            match = (strstr(line, search_string) != NULL); // fallback to case-sensitive
+                        }
+                    } else {
+                        match = (strstr(line, search_string) != NULL);
+                    }
+                    
+                    if (invert_match) {
+                        match = !match;  // Invert the match for /V flag
+                    }
+                    
+                    if (match) {
                         found_count++;
+                        if (!count_only) {
+                            printf("%s", line);
+                        }
                     }
                     line_num++;
+                }
+                
+                if (count_only) {
+                    printf("%d\n", found_count);
                 }
                 
                 if (found_count == 0) {
